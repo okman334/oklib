@@ -23,3 +23,9 @@ add_test(NAME oklib.tcp COMMAND oklib_tcp_test)
 add_executable(oklib_http_test http/http_test.cpp)
 target_link_libraries(oklib_http_test PRIVATE oklib::http)
 add_test(NAME oklib.http COMMAND oklib_http_test)
+
+add_test(
+  NAME oklib.example.tcp_echo_server_logging
+  COMMAND ${CMAKE_COMMAND}
+          -DPROJECT_SOURCE_DIR=${PROJECT_SOURCE_DIR}
+          -P ${CMAKE_CURRENT_SOURCE_DIR}/examples/verify_tcp_echo_server_logging.cmake)
