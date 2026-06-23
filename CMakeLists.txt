@@ -16,13 +16,17 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
   set(CMAKE_BUILD_TYPE RelWithDebInfo CACHE STRING "Build type" FORCE)
 endif()
 
-add_library(oklib_base INTERFACE)
+add_library(oklib_base STATIC
+  src/base/countdown_latch.cpp
+  src/base/logging.cpp
+  src/base/thread_pool.cpp
+  src/base/timestamp.cpp)
 add_library(oklib::base ALIAS oklib_base)
 target_include_directories(oklib_base
-  INTERFACE
+  PUBLIC
     $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
     $<INSTALL_INTERFACE:include>)
-target_compile_features(oklib_base INTERFACE cxx_std_20)
+target_compile_features(oklib_base PUBLIC cxx_std_20)
 
 add_library(oklib_net STATIC
   src/net/acceptor.cpp

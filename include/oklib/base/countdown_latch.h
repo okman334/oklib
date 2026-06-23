@@ -9,27 +9,13 @@ namespace oklib {
 
 class CountDownLatch : private Noncopyable {
  public:
-  explicit CountDownLatch(int count) : count_(count) {}
+  explicit CountDownLatch(int count);
 
-  void wait() {
-    std::unique_lock lock(mutex_);
-    cv_.wait(lock, [this] { return count_ == 0; });
-  }
+  void wait();
 
-  void count_down() {
-    std::lock_guard lock(mutex_);
-    if (count_ > 0) {
-      --count_;
-      if (count_ == 0) {
-        cv_.notify_all();
-      }
-    }
-  }
+  void count_down();
 
-  [[nodiscard]] int count() const {
-    std::lock_guard lock(mutex_);
-    return count_;
-  }
+  [[nodiscard]] int count() const;
 
  private:
   mutable std::mutex mutex_;

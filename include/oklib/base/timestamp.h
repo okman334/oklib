@@ -3,8 +3,6 @@
 #include <chrono>
 #include <cstdint>
 #include <ctime>
-#include <iomanip>
-#include <sstream>
 #include <string>
 
 namespace oklib {
@@ -18,10 +16,7 @@ class Timestamp {
   explicit constexpr Timestamp(int64_t microseconds_since_epoch) noexcept
       : microseconds_since_epoch_(microseconds_since_epoch) {}
 
-  static Timestamp now() {
-    const auto now = clock::now().time_since_epoch();
-    return Timestamp(std::chrono::duration_cast<std::chrono::microseconds>(now).count());
-  }
+  static Timestamp now();
 
   static constexpr Timestamp invalid() noexcept { return Timestamp(); }
 
@@ -37,26 +32,9 @@ class Timestamp {
     return static_cast<std::time_t>(microseconds_since_epoch_ / k_microseconds_per_second);
   }
 
-  [[nodiscard]] std::string to_string() const {
-    return std::to_string(microseconds_since_epoch_);
-  }
+  [[nodiscard]] std::string to_string() const;
 
-  [[nodiscard]] std::string to_formatted_string(bool show_microseconds = true) const {
-    const std::time_t seconds = seconds_since_epoch();
-    std::tm tm{};
-#if defined(_WIN32)
-    gmtime_s(&tm, &seconds);
-#else
-    gmtime_r(&seconds, &tm);
-#endif
-    std::ostringstream out;
-    out << std::put_time(&tm, "%Y-%m-%d %H:%M:%S");
-    if (show_microseconds) {
-      out << '.' << std::setw(6) << std::setfill('0')
-          << microseconds_since_epoch_ % k_microseconds_per_second;
-    }
-    return out.str();
-  }
+  [[nodiscard]] std::string to_formatted_string(bool show_microseconds = true) const;
 
  private:
   int64_t microseconds_since_epoch_{0};

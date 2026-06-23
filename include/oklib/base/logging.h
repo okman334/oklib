@@ -1,13 +1,10 @@
 #pragma once
 
-#include <chrono>
 #include <functional>
-#include <iostream>
-#include <mutex>
+#include <ostream>
 #include <sstream>
 #include <string>
 #include <string_view>
-#include <thread>
 
 #include "oklib/base/noncopyable.h"
 #include "oklib/base/timestamp.h"
@@ -27,23 +24,9 @@ class Logger : private Noncopyable {
 
   using Output = std::function<void(std::string_view)>;
 
-  Logger(Level level, const char* file, int line) : level_(level), file_(file), line_(line) {
-    stream_ << Timestamp::now().to_formatted_string() << ' ' << level_name(level_) << ' '
-            << std::this_thread::get_id() << ' ' << basename(file_) << ':' << line_ << " - ";
-  }
+  Logger(Level level, const char* file, int line);
 
-  ~Logger() {
-    stream_ << '\n';
-    const auto message = stream_.str();
-    if (auto sink = output()) {
-      sink(message);
-    } else {
-      std::cerr << message;
-    }
-    if (level_ == Level::fatal) {
-      std::abort();
-    }
-  }
+  ~Logger();
 
   template <typename T>
   Logger& operator<<(T&& value) {
@@ -57,77 +40,20 @@ class Logger : private Noncopyable {
     return *this;
   }
 
-  static void set_level(Level level) {
-    std::lock_guard lock(config_mutex());
-    level_storage() = level;
-  }
+  static void set_level(Level level);
 
-  static Level level() {
-    std::lock_guard lock(config_mutex());
-    return level_storage();
-  }
+  static Level level();
 
-  static bool enabled(Level level) {
-    return static_cast<int>(level) >= static_cast<int>(Logger::level());
-  }
+  static bool enabled(Level level);
 
-  static void set_output(Output output) {
-    std::lock_guard lock(config_mutex());
-    output_storage() = std::move(output);
-  }
+  static void set_output(Output output);
 
  private:
-  static Output output() {
-    std::lock_guard lock(config_mutex());
-    return output_storage();
-  }
-
-  static const char* level_name(Level level) noexcept {
-    switch (level) {
-      case Level::trace:
-        return "TRACE";
-      case Level::debug:
-        return "DEBUG";
-      case Level::info:
-        return "INFO";
-      case Level::warn:
-        return "WARN";
-      case Level::error:
-        return "ERROR";
-      case Level::fatal:
-        return "FATAL";
-    }
-    return "UNKNOWN";
-  }
-
-  static const char* basename(const char* path) noexcept {
-    const char* base = path;
-    for (const char* p = path; *p != '\0'; ++p) {
-      if (*p == '/' || *p == '\\') {
-        base = p + 1;
-      }
-    }
-    return base;
-  }
-
-  static std::mutex& config_mutex() {
-    static std::mutex mutex;
-    return mutex;
-  }
-
-  static Output& output_storage() {
-    static Output output;
-    return output;
-  }
-
-  static Level& level_storage() {
-    static Level level = Level::info;
-    return level;
-  }
+  static Output output();
+  static const char* level_name(Level level) noexcept;
+  static const char* basename(const char* path) noexcept;
 
   Level level_;
-  const char* file_;
-  int line_;
   std::ostringstream stream_;
 };
 
