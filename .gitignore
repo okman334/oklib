@@ -1,0 +1,11 @@
+build/
+cmake-build-*/
+.cache/
+.DS_Store
+*.o
+*.a
+*.dylib
+*.so
+*.log
+.worktrees/
+worktrees/
