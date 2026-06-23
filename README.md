@@ -25,6 +25,13 @@ Run the example HTTP server:
 curl http://127.0.0.1:8080/
 ```
 
+Run the TCP echo examples:
+
+```sh
+./build/examples/oklib_tcp_echo_server 9000 2
+./build/examples/oklib_tcp_echo_client 127.0.0.1 9000 "hello"
+```
+
 ## License
 
 MIT. The design studies muduo's public architecture, but the implementation is
