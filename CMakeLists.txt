@@ -25,9 +25,20 @@ target_include_directories(oklib_base
 target_compile_features(oklib_base INTERFACE cxx_std_20)
 
 add_library(oklib_net STATIC
+  src/net/acceptor.cpp
+  src/net/buffer.cpp
+  src/net/callbacks.cpp
   src/net/channel.cpp
+  src/net/connector.cpp
   src/net/event_loop.cpp
-  src/net/poller.cpp)
+  src/net/event_loop_thread.cpp
+  src/net/event_loop_thread_pool.cpp
+  src/net/inet_address.cpp
+  src/net/poller.cpp
+  src/net/socket.cpp
+  src/net/tcp_client.cpp
+  src/net/tcp_connection.cpp
+  src/net/tcp_server.cpp)
 add_library(oklib::net ALIAS oklib_net)
 target_link_libraries(oklib_net PUBLIC oklib::base)
 target_include_directories(oklib_net

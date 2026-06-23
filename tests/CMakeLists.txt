@@ -9,3 +9,7 @@ add_test(NAME oklib.base COMMAND oklib_base_test)
 add_executable(oklib_reactor_test net/reactor_test.cpp)
 target_link_libraries(oklib_reactor_test PRIVATE oklib::net)
 add_test(NAME oklib.reactor COMMAND oklib_reactor_test)
+
+add_executable(oklib_tcp_test net/tcp_test.cpp)
+target_link_libraries(oklib_tcp_test PRIVATE oklib::net)
+add_test(NAME oklib.tcp COMMAND oklib_tcp_test)

@@ -2,8 +2,10 @@
 
 #include <algorithm>
 #include <cerrno>
+#include <csignal>
 #include <cstring>
 #include <fcntl.h>
+#include <mutex>
 #include <stdexcept>
 #include <system_error>
 #include <unistd.h>
@@ -17,6 +19,7 @@ namespace {
 
 thread_local EventLoop* loop_in_this_thread = nullptr;
 constexpr int k_default_poll_timeout_ms = 10000;
+std::once_flag ignore_sigpipe_once;
 
 void set_non_blocking_and_close_on_exec(int fd) {
   const int flags = ::fcntl(fd, F_GETFL, 0);
@@ -36,6 +39,7 @@ EventLoop* EventLoop::current() {
 }
 
 EventLoop::EventLoop() : thread_id_(std::this_thread::get_id()), poller_(std::make_unique<Poller>(this)) {
+  std::call_once(ignore_sigpipe_once, [] { ::signal(SIGPIPE, SIG_IGN); });
   if (loop_in_this_thread != nullptr) {
     throw std::logic_error("only one EventLoop may exist per thread");
   }
