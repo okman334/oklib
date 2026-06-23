@@ -7,6 +7,8 @@
 
 #include <atomic>
 #include <chrono>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <mutex>
 #include <string>
@@ -22,6 +24,11 @@ void require(bool condition, const char* message) {
   }
 }
 
+std::string read_file(const std::filesystem::path& path) {
+  std::ifstream input(path);
+  return std::string(std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>());
+}
+
 }  // namespace
 
 int main() {
@@ -35,6 +42,28 @@ int main() {
   require(captured.find("INFO") != std::string::npos, "logger emits level");
   require(captured.find("hello 42") != std::string::npos, "logger emits stream contents");
   oklib::Logger::set_output({});
+
+  require(oklib::Logger::file_basename().find("oklib_base_test") != std::string::npos,
+          "default log file basename uses current program name");
+
+  const auto log_dir = std::filesystem::temp_directory_path() /
+                       ("oklib-logger-test-" + std::to_string(now.microseconds_since_epoch()));
+  std::filesystem::create_directories(log_dir);
+  oklib::Logger::set_log_directory(log_dir);
+  oklib::Logger::set_file_basename("custom-base");
+  oklib::Logger::set_level(oklib::Logger::Level::trace);
+  OKLIB_LOG_INFO << "info-file-message";
+  OKLIB_LOG_WARN << "warn-file-message";
+  oklib::Logger::flush();
+
+  const auto info_log = read_file(log_dir / "custom-base.info.log");
+  const auto warn_log = read_file(log_dir / "custom-base.warn.log");
+  require(info_log.find("info-file-message") != std::string::npos,
+          "info log writes to custom info file");
+  require(warn_log.find("warn-file-message") != std::string::npos,
+          "warn log writes to custom warn file");
+  require(info_log.find("warn-file-message") == std::string::npos,
+          "warn log is separated from info log");
 
   oklib::CountDownLatch latch(2);
   std::jthread t1([&] { latch.count_down(); });

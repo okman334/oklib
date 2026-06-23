@@ -1,6 +1,7 @@
 #pragma once
 
 #include <functional>
+#include <filesystem>
 #include <ostream>
 #include <sstream>
 #include <string>
@@ -47,6 +48,11 @@ class Logger : private Noncopyable {
   static bool enabled(Level level);
 
   static void set_output(Output output);
+  static void set_log_directory(std::filesystem::path directory);
+  static void set_file_basename(std::string basename);
+  static std::filesystem::path log_directory();
+  static std::string file_basename();
+  static void flush();
 
  private:
   static Output output();

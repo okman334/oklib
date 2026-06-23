@@ -32,6 +32,18 @@ Run the TCP echo examples:
 ./build/examples/oklib_tcp_echo_client 127.0.0.1 9000 "hello"
 ```
 
+Configure file logging:
+
+```cpp
+oklib::Logger::set_log_directory("logs");
+oklib::Logger::set_file_basename("gateway");
+OKLIB_LOG_INFO << "server started";
+oklib::Logger::flush();
+```
+
+By default, logs are written asynchronously to per-level files named from the
+current program, such as `my_server.info.log` and `my_server.error.log`.
+
 ## License
 
 MIT. The design studies muduo's public architecture, but the implementation is
