@@ -47,14 +47,18 @@ target_include_directories(oklib_net
     $<INSTALL_INTERFACE:include>)
 target_compile_features(oklib_net PUBLIC cxx_std_20)
 
-add_library(oklib_http INTERFACE)
+add_library(oklib_http STATIC
+  src/http/http_context.cpp
+  src/http/http_request.cpp
+  src/http/http_response.cpp
+  src/http/http_server.cpp)
 add_library(oklib::http ALIAS oklib_http)
-target_link_libraries(oklib_http INTERFACE oklib::net)
+target_link_libraries(oklib_http PUBLIC oklib::net)
 target_include_directories(oklib_http
-  INTERFACE
+  PUBLIC
     $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
     $<INSTALL_INTERFACE:include>)
-target_compile_features(oklib_http INTERFACE cxx_std_20)
+target_compile_features(oklib_http PUBLIC cxx_std_20)
 
 if(OKLIB_BUILD_TESTS)
   enable_testing()

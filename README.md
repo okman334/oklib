@@ -18,6 +18,13 @@ cmake --build build
 ctest --test-dir build --output-on-failure
 ```
 
+Run the example HTTP server:
+
+```sh
+./build/examples/oklib_http_server 8080
+curl http://127.0.0.1:8080/
+```
+
 ## License
 
 MIT. The design studies muduo's public architecture, but the implementation is
