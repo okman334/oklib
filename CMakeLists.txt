@@ -24,14 +24,17 @@ target_include_directories(oklib_base
     $<INSTALL_INTERFACE:include>)
 target_compile_features(oklib_base INTERFACE cxx_std_20)
 
-add_library(oklib_net INTERFACE)
+add_library(oklib_net STATIC
+  src/net/channel.cpp
+  src/net/event_loop.cpp
+  src/net/poller.cpp)
 add_library(oklib::net ALIAS oklib_net)
-target_link_libraries(oklib_net INTERFACE oklib::base)
+target_link_libraries(oklib_net PUBLIC oklib::base)
 target_include_directories(oklib_net
-  INTERFACE
+  PUBLIC
     $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
     $<INSTALL_INTERFACE:include>)
-target_compile_features(oklib_net INTERFACE cxx_std_20)
+target_compile_features(oklib_net PUBLIC cxx_std_20)
 
 add_library(oklib_http INTERFACE)
 add_library(oklib::http ALIAS oklib_http)
