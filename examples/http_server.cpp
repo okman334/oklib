@@ -1,6 +1,7 @@
 #include <csignal>
 #include <iostream>
 
+#include "oklib/base/logging.h"
 #include "oklib/http/http_request.h"
 #include "oklib/http/http_response.h"
 #include "oklib/http/http_server.h"
@@ -17,6 +18,7 @@ int main(int argc, char** argv) {
       response->set_status_code(oklib::http::HttpStatusCode::ok);
       response->set_content_type("text/plain");
       response->set_body("oklib http server\n");
+      OKLIB_LOG_INFO << " test ip: " << request.peer_ip();
       return;
     }
     response->set_status_code(oklib::http::HttpStatusCode::not_found);
