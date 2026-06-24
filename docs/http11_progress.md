@@ -2,7 +2,7 @@
 
 ## Current Phase
 
-- Phase 1: HTTP core model and incremental parser.
+- Phase 2: buffered `HttpServer` upgrade.
 
 ## Completed Phases
 
@@ -19,10 +19,15 @@
   - Extended `HttpRequest` with method token, request-target form, body, content length, and trailers.
   - Added `HttpParser` for incremental request/response parsing, fixed-length body, chunked body, trailers, pipeline leftover, and strict ambiguous framing rejection.
   - Added `oklib.http.parser` tests.
+  - Commit: `38ddbef`.
+  - Push: `origin/codex/http11-compliance`.
+- Phase 2: buffered `HttpServer` upgrade.
+  - Routed `HttpContext` through `HttpParser`.
+  - `HttpServer` now supports buffered Content-Length request bodies, chunked request bodies, trailers, Host validation, ambiguous framing rejection, and multiple pipelined requests in one read buffer.
+  - Added integration coverage in `oklib.http`.
 
 ## Incomplete Phases
 
-- Phase 2: buffered `HttpServer` upgrade.
 - Phase 3: server streaming and backpressure.
 - Phase 4: HTTP client.
 - Phase 5: RFC 9110 semantic helpers.
@@ -40,8 +45,9 @@
 ## Latest Commit / Push
 
 - Phase 0 commit pushed: `8c11053`.
-- Pending Phase 1 commit and push.
+- Phase 1 commit pushed: `38ddbef`.
+- Pending Phase 2 commit and push.
 
 ## Next Step
 
-- Start Phase 2 by writing failing server integration tests for body parsing, chunked requests, Host validation, and HTTP/1.1 pipeline handling.
+- Start Phase 3 with failing streaming/backpressure tests for request body callbacks and `HttpResponseWriter`.

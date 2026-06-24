@@ -63,9 +63,12 @@ class HttpParser {
   void reset();
 
   [[nodiscard]] HttpParserMode mode() const noexcept { return mode_; }
+  [[nodiscard]] bool complete() const noexcept;
   [[nodiscard]] HttpParseError error() const noexcept { return error_; }
   [[nodiscard]] const HttpRequest& request() const noexcept { return request_; }
+  [[nodiscard]] HttpRequest& mutable_request() noexcept { return request_; }
   [[nodiscard]] const HttpResponseMessage& response() const noexcept { return response_; }
+  [[nodiscard]] HttpResponseMessage& mutable_response() noexcept { return response_; }
 
  private:
   enum class State {

@@ -239,6 +239,10 @@ void HttpParser::reset() {
   chunked_ = false;
 }
 
+bool HttpParser::complete() const noexcept {
+  return state_ == State::complete;
+}
+
 HttpParseStatus HttpParser::parse(oklib::net::Buffer* buffer, oklib::Timestamp receive_time) {
   for (;;) {
     switch (state_) {

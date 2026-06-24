@@ -1,6 +1,7 @@
 #include "oklib/http/http_server.h"
 
 #include <any>
+#include <cctype>
 #include <utility>
 
 #include "oklib/http/http_context.h"
@@ -11,6 +12,19 @@
 
 namespace oklib::http {
 namespace {
+
+bool equals_ignore_case(std::string_view lhs, std::string_view rhs) {
+  if (lhs.size() != rhs.size()) {
+    return false;
+  }
+  for (std::size_t i = 0; i < lhs.size(); ++i) {
+    if (std::tolower(static_cast<unsigned char>(lhs[i])) !=
+        std::tolower(static_cast<unsigned char>(rhs[i]))) {
+      return false;
+    }
+  }
+  return true;
+}
 
 void default_http_callback(const HttpRequest&, HttpResponse* response) {
   response->set_status_code(HttpStatusCode::not_found);
@@ -48,22 +62,36 @@ void HttpServer::on_message(const oklib::net::TcpConnectionPtr& connection,
                             oklib::net::Buffer* buffer,
                             oklib::Timestamp receive_time) {
   auto* context = std::any_cast<HttpContext>(&connection->mutable_context());
-  if (context == nullptr || !context->parse_request(buffer, receive_time)) {
+  if (context == nullptr) {
     connection->send("HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
     connection->shutdown();
     return;
   }
 
-  if (context->got_all()) {
-    on_request(connection, context->request());
+  while (connection->connected()) {
+    const auto status = context->parse_request(buffer, receive_time);
+    if (status == HttpParseStatus::error) {
+      connection->send("HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
+      connection->shutdown();
+      return;
+    }
+    if (status == HttpParseStatus::incomplete) {
+      return;
+    }
+
+    const bool close = on_request(connection, context->request());
     context->reset();
+    if (close || buffer->readable_bytes() == 0) {
+      return;
+    }
   }
 }
 
-void HttpServer::on_request(const oklib::net::TcpConnectionPtr& connection, const HttpRequest& request) {
+bool HttpServer::on_request(const oklib::net::TcpConnectionPtr& connection, const HttpRequest& request) {
   const std::string connection_header = request.header("Connection");
-  const bool close = connection_header == "close" ||
-                     (request.version() == HttpVersion::http10 && connection_header != "Keep-Alive");
+  const bool close = equals_ignore_case(connection_header, "close") ||
+                     (request.version() == HttpVersion::http10 &&
+                      !equals_ignore_case(connection_header, "Keep-Alive"));
 
   HttpResponse response(close);
   http_callback_(request, &response);
@@ -73,6 +101,7 @@ void HttpServer::on_request(const oklib::net::TcpConnectionPtr& connection, cons
   if (response.close_connection()) {
     connection->shutdown();
   }
+  return response.close_connection();
 }
 
 }  // namespace oklib::http

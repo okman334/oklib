@@ -30,7 +30,7 @@ class HttpServer : private oklib::Noncopyable {
   void on_connection(const oklib::net::TcpConnectionPtr& connection);
   void on_message(const oklib::net::TcpConnectionPtr& connection, oklib::net::Buffer* buffer,
                   oklib::Timestamp receive_time);
-  void on_request(const oklib::net::TcpConnectionPtr& connection, const HttpRequest& request);
+  bool on_request(const oklib::net::TcpConnectionPtr& connection, const HttpRequest& request);
 
   oklib::net::TcpServer server_;
   HttpCallback http_callback_;
