@@ -28,6 +28,7 @@ namespace {
 constexpr std::size_t k_log_buffer_flush_size = 4 * 1024 * 1024;
 constexpr std::uintmax_t k_default_roll_size = 256 * 1024 * 1024;
 constexpr std::uintmax_t k_min_roll_size = 1;
+constexpr std::size_t k_default_max_roll_files = 5;
 constexpr auto k_default_flush_interval = std::chrono::seconds(3);
 constexpr auto k_min_flush_interval = std::chrono::milliseconds(1);
 
@@ -99,6 +100,11 @@ std::uintmax_t& roll_size_storage() {
   return size;
 }
 
+std::size_t& max_roll_files_storage() {
+  static std::size_t files = k_default_max_roll_files;
+  return files;
+}
+
 std::string level_suffix(Logger::Level level) {
   switch (level) {
     case Logger::Level::trace:
@@ -129,12 +135,15 @@ std::uintmax_t file_size_or_zero(const std::filesystem::path& path) {
   return error ? 0 : size;
 }
 
-std::filesystem::path rolled_log_path(const std::filesystem::path& base_path,
-                                      std::uint64_t sequence) {
+std::filesystem::path indexed_log_path(const std::filesystem::path& base_path,
+                                       std::size_t index) {
+  if (index == 0) {
+    return base_path;
+  }
   const auto stem = base_path.stem().string();
   const auto extension = base_path.extension().string();
   return base_path.parent_path() /
-         (stem + "." + Timestamp::now().to_string() + "." + std::to_string(sequence) + extension);
+         (stem + "." + std::to_string(index) + extension);
 }
 
 class AsyncFileLogger : private Noncopyable {
@@ -148,10 +157,8 @@ class AsyncFileLogger : private Noncopyable {
 
   struct Sink {
     std::filesystem::path base_path;
-    std::filesystem::path active_path;
     std::ofstream stream;
     std::uintmax_t written{0};
-    std::uint64_t roll_sequence{0};
   };
 
   ~AsyncFileLogger() {
@@ -276,24 +283,11 @@ class AsyncFileLogger : private Noncopyable {
     const auto roll_size = Logger::roll_size();
     std::string_view remaining(buffer.data(), buffer.size());
     while (!remaining.empty()) {
-      if (sink.written >= roll_size) {
-        roll_sink(sink);
-      }
-
-      const auto available = roll_size - sink.written;
-      std::size_t write_size = std::min<std::size_t>(remaining.size(), available);
-      if (write_size < remaining.size()) {
-        const auto line_end = remaining.rfind('\n', write_size - 1);
-        if (line_end != std::string_view::npos) {
-          write_size = line_end + 1;
-        }
-      }
-      if (write_size == 0) {
-        write_size = std::min<std::size_t>(remaining.size(), available);
-      }
-
-      write_to_sink(sink, remaining.substr(0, write_size));
-      remaining.remove_prefix(write_size);
+      const auto newline = remaining.find('\n');
+      const auto record_size = newline == std::string_view::npos ? remaining.size() : newline + 1;
+      const auto record = remaining.substr(0, record_size);
+      write_record(sink, record, roll_size);
+      remaining.remove_prefix(record_size);
     }
 
     buffer.clear();
@@ -319,15 +313,22 @@ class AsyncFileLogger : private Noncopyable {
       return;
     }
     sink.base_path = path;
-    sink.active_path = path;
     sink.written = file_size_or_zero(path);
   }
 
+  static void write_record(Sink& sink, std::string_view data, std::uintmax_t roll_size) {
+    const auto data_size = static_cast<std::uintmax_t>(data.size());
+    if (sink.written > 0 && (sink.written >= roll_size || data_size > roll_size - sink.written)) {
+      roll_sink(sink);
+    }
+    write_to_sink(sink, data);
+  }
+
   static void write_to_sink(Sink& sink, std::string_view data) {
-    std::filesystem::create_directories(sink.active_path.parent_path());
+    std::filesystem::create_directories(sink.base_path.parent_path());
     if (!sink.stream.is_open()) {
-      sink.stream.open(sink.active_path, std::ios::app | std::ios::binary);
-      sink.written = file_size_or_zero(sink.active_path);
+      sink.stream.open(sink.base_path, std::ios::app | std::ios::binary);
+      sink.written = file_size_or_zero(sink.base_path);
     }
     sink.stream.write(data.data(), static_cast<std::streamsize>(data.size()));
     sink.written += data.size();
@@ -339,12 +340,28 @@ class AsyncFileLogger : private Noncopyable {
       sink.stream.close();
     }
 
-    std::filesystem::path next_path;
-    do {
-      next_path = rolled_log_path(sink.base_path, ++sink.roll_sequence);
-    } while (std::filesystem::exists(next_path));
+    const auto max_files = Logger::max_roll_files();
+    if (max_files == 0) {
+      std::filesystem::create_directories(sink.base_path.parent_path());
+      std::ofstream truncate(sink.base_path, std::ios::binary | std::ios::trunc);
+      sink.written = 0;
+      return;
+    }
 
-    sink.active_path = std::move(next_path);
+    for (std::size_t index = max_files; index > 0; --index) {
+      const auto source = indexed_log_path(sink.base_path, index - 1);
+      if (!std::filesystem::exists(source)) {
+        continue;
+      }
+      const auto target = indexed_log_path(sink.base_path, index);
+      std::error_code error;
+      std::filesystem::remove(target, error);
+      error.clear();
+      std::filesystem::rename(source, target, error);
+      if (error && index == 1) {
+        std::ofstream truncate(sink.base_path, std::ios::binary | std::ios::trunc);
+      }
+    }
     sink.written = 0;
   }
 
@@ -457,6 +474,16 @@ void Logger::set_roll_size(std::uintmax_t bytes) {
 std::uintmax_t Logger::roll_size() {
   std::lock_guard lock(config_mutex());
   return roll_size_storage();
+}
+
+void Logger::set_max_roll_files(std::size_t files) {
+  std::lock_guard lock(config_mutex());
+  max_roll_files_storage() = files;
+}
+
+std::size_t Logger::max_roll_files() {
+  std::lock_guard lock(config_mutex());
+  return max_roll_files_storage();
 }
 
 void Logger::flush() {

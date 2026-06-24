@@ -68,6 +68,11 @@ std::string read_files(const std::vector<std::filesystem::path>& files) {
   return content;
 }
 
+void write_file(const std::filesystem::path& path, const std::string& content) {
+  std::ofstream output(path, std::ios::binary);
+  output << content;
+}
+
 }  // namespace
 
 int main() {
@@ -144,18 +149,80 @@ int main() {
   oklib::Logger::set_log_directory(rolling_dir);
   oklib::Logger::set_file_basename("rolling-base");
   oklib::Logger::set_roll_size(512);
+  oklib::Logger::set_max_roll_files(3);
   require(oklib::Logger::roll_size() == 512, "roll size is configurable");
-  for (int i = 0; i < 40; ++i) {
+  require(oklib::Logger::max_roll_files() == 3, "max roll files is configurable");
+  for (int i = 0; i < 8; ++i) {
     OKLIB_LOG_INFO << "rolling-message-" << i << ' ' << std::string(80, 'x');
   }
   oklib::Logger::flush();
-  const auto rolled_files = log_files_with_prefix(rolling_dir, "rolling-base.info");
-  require(rolled_files.size() >= 2, "logger rolls info file when configured size is exceeded");
+  require(std::filesystem::exists(rolling_dir / "rolling-base.info.log"),
+          "active rolling log remains at base name");
+  require(std::filesystem::exists(rolling_dir / "rolling-base.info.1.log"),
+          "first backup uses spdlog-style index");
+  require(!std::filesystem::exists(rolling_dir / "rolling-base.info.4.log"),
+          "logger does not create backups beyond configured max files");
+  auto rolled_files = log_files_with_prefix(rolling_dir, "rolling-base.info");
   const auto rolled_content = read_files(rolled_files);
   require(rolled_content.find("rolling-message-0") != std::string::npos,
           "rolled logs contain first message");
-  require(rolled_content.find("rolling-message-39") != std::string::npos,
+  require(rolled_content.find("rolling-message-7") != std::string::npos,
           "rolled logs contain last message");
+
+  const auto restart_dir = std::filesystem::temp_directory_path() /
+                           ("oklib-logger-restart-roll-test-" +
+                            std::to_string(now.microseconds_since_epoch()));
+  std::filesystem::create_directories(restart_dir);
+  const auto restart_active = restart_dir / "restart-base.info.log";
+  write_file(restart_active, "existing-over-limit\n" + std::string(700, 'o'));
+  oklib::Logger::set_log_directory(restart_dir);
+  oklib::Logger::set_file_basename("restart-base");
+  oklib::Logger::set_roll_size(512);
+  oklib::Logger::set_max_roll_files(3);
+  OKLIB_LOG_INFO << "restart-new-message";
+  oklib::Logger::flush();
+  const auto restart_active_content = read_file(restart_active);
+  const auto restart_backup_content = read_file(restart_dir / "restart-base.info.1.log");
+  require(restart_active_content.find("restart-new-message") != std::string::npos,
+          "restart writes new message to fresh active file");
+  require(restart_active_content.find("existing-over-limit") == std::string::npos,
+          "restart does not append to oversized active file");
+  require(restart_backup_content.find("existing-over-limit") != std::string::npos,
+          "restart rotates oversized active file to first backup");
+
+  const auto retention_dir = std::filesystem::temp_directory_path() /
+                             ("oklib-logger-retention-test-" +
+                              std::to_string(now.microseconds_since_epoch()));
+  std::filesystem::create_directories(retention_dir);
+  oklib::Logger::set_log_directory(retention_dir);
+  oklib::Logger::set_file_basename("retention-base");
+  oklib::Logger::set_roll_size(256);
+  oklib::Logger::set_max_roll_files(3);
+  for (int i = 0; i < 20; ++i) {
+    OKLIB_LOG_INFO << "retention-message-" << i << ' ' << std::string(80, 'r');
+  }
+  oklib::Logger::flush();
+  require(std::filesystem::exists(retention_dir / "retention-base.info.3.log"),
+          "logger keeps the oldest configured backup index");
+  require(!std::filesystem::exists(retention_dir / "retention-base.info.4.log"),
+          "logger removes backups beyond max roll files");
+
+  const auto truncate_dir = std::filesystem::temp_directory_path() /
+                            ("oklib-logger-truncate-roll-test-" +
+                             std::to_string(now.microseconds_since_epoch()));
+  std::filesystem::create_directories(truncate_dir);
+  oklib::Logger::set_log_directory(truncate_dir);
+  oklib::Logger::set_file_basename("truncate-base");
+  oklib::Logger::set_roll_size(256);
+  oklib::Logger::set_max_roll_files(0);
+  for (int i = 0; i < 10; ++i) {
+    OKLIB_LOG_INFO << "truncate-message-" << i << ' ' << std::string(80, 't');
+  }
+  oklib::Logger::flush();
+  require(std::filesystem::exists(truncate_dir / "truncate-base.info.log"),
+          "truncate mode keeps active file");
+  require(!std::filesystem::exists(truncate_dir / "truncate-base.info.1.log"),
+          "truncate mode does not keep backup files");
 
   oklib::CountDownLatch latch(2);
   std::jthread t1([&] { latch.count_down(); });
