@@ -1,3 +1,4 @@
+#include <oklib/base/thread_pool.h>
 #include <oklib/http/http_request.h>
 #include <oklib/http/http_response.h>
 #include <oklib/http/http_server.h>
@@ -10,6 +11,8 @@
 
 #include <cstdlib>
 #include <cstring>
+#include <atomic>
+#include <chrono>
 #include <functional>
 #include <iostream>
 #include <string>
@@ -100,6 +103,42 @@ std::string run_http_case(const std::string& request,
   return response;
 }
 
+std::string run_async_http_case(const std::string& request,
+                                std::atomic<bool>* worker_ran_in_loop_thread,
+                                const std::function<bool(const std::string&)>& done = {}) {
+  oklib::net::EventLoop loop;
+  oklib::ThreadPool workers("http-worker-test");
+  workers.start(1);
+
+  oklib::http::HttpServer server(&loop, oklib::net::InetAddress::loopback(0), "http-async-test");
+  server.set_async_http_callback(
+      [&](oklib::http::HttpRequest req, oklib::http::HttpResponseWriter writer) {
+        require(loop.is_in_loop_thread(), "async callback starts on loop thread");
+        workers.run([request = std::move(req), writer, &loop, worker_ran_in_loop_thread] {
+          if (request.query() == "one") {
+            std::this_thread::sleep_for(std::chrono::milliseconds(40));
+          }
+          worker_ran_in_loop_thread->store(loop.is_in_loop_thread(), std::memory_order_release);
+
+          auto response = writer.make_response();
+          response.set_status_code(oklib::http::HttpStatusCode::ok);
+          response.add_header("X-Async", "worker");
+          response.set_content_type("text/plain");
+          response.set_body("async " + request.query());
+          require(writer.send(std::move(response)), "async response sent");
+        });
+      });
+  server.start();
+
+  std::string response;
+  std::jthread client([&] { response = request_once(request, server.listen_address(), &loop, done); });
+  loop.run_after(std::chrono::seconds(2), [&] { loop.quit(); });
+  loop.loop();
+  client.join();
+  workers.stop();
+  return response;
+}
+
 }  // namespace
 
 int main() {
@@ -159,6 +198,29 @@ int main() {
                     "Content-Length: 5\r\nConnection: close\r\n\r\n0\r\n\r\n");
   require(ambiguous_framing.find("HTTP/1.1 400 Bad Request") != std::string::npos,
           "ambiguous message framing rejected");
+
+  std::atomic<bool> worker_ran_in_loop_thread{true};
+  const auto async_response =
+      run_async_http_case("GET /async?single HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n",
+                          &worker_ran_in_loop_thread);
+  require(async_response.find("X-Async: worker") != std::string::npos, "async response has worker header");
+  require(async_response.find("async single") != std::string::npos, "async response body returned");
+  require(!worker_ran_in_loop_thread.load(std::memory_order_acquire), "async response completed off loop thread");
+
+  worker_ran_in_loop_thread.store(true, std::memory_order_release);
+  const auto async_pipeline =
+      run_async_http_case("GET /async?one HTTP/1.1\r\nHost: localhost\r\n\r\n"
+                          "GET /async?two HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n",
+                          &worker_ran_in_loop_thread,
+                          [](const std::string& response) {
+                            return response.find("async one") != std::string::npos &&
+                                   response.find("async two") != std::string::npos;
+                          });
+  const auto one_pos = async_pipeline.find("async one");
+  const auto two_pos = async_pipeline.find("async two");
+  require(one_pos != std::string::npos, "first async pipelined response returned");
+  require(two_pos != std::string::npos, "second async pipelined response returned");
+  require(one_pos < two_pos, "async pipelined responses keep request order");
 
   return 0;
 }

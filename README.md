@@ -25,6 +25,26 @@ Run the example HTTP server:
 curl http://127.0.0.1:8080/
 ```
 
+HTTP handlers can also respond asynchronously from worker threads. This keeps
+the `EventLoop` free while business code waits for a database or another HTTP
+service:
+
+```cpp
+oklib::ThreadPool workers("http-workers");
+workers.start(4);
+
+server.set_async_http_callback(
+    [&workers](oklib::http::HttpRequest request,
+               oklib::http::HttpResponseWriter writer) {
+      workers.run([request = std::move(request), writer] {
+        auto response = writer.make_response();
+        response.set_status_code(oklib::http::HttpStatusCode::ok);
+        response.set_body("hello " + request.query());
+        writer.send(std::move(response));
+      });
+    });
+```
+
 Run the TCP echo examples:
 
 ```sh

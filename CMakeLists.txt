@@ -61,6 +61,7 @@ add_library(oklib_http STATIC
   src/http/http_parser.cpp
   src/http/http_request.cpp
   src/http/http_response.cpp
+  src/http/http_response_writer.cpp
   src/http/http_server.cpp)
 add_library(oklib::http ALIAS oklib_http)
 target_link_libraries(oklib_http PUBLIC oklib::net)

@@ -19,6 +19,16 @@ void HttpContext::set_peer_address(std::string ip, uint16_t port) {
   peer_port_ = port;
 }
 
+HttpResponseWriter HttpContext::make_response_writer(const oklib::net::TcpConnectionPtr& connection,
+                                                     bool close_connection,
+                                                     bool include_body) {
+  if (!response_writer_state_) {
+    response_writer_state_ = HttpResponseWriter::make_state(connection);
+  }
+  return HttpResponseWriter(response_writer_state_, next_response_sequence_++, close_connection,
+                            include_body);
+}
+
 void HttpContext::reset() {
   parser_.reset();
 }

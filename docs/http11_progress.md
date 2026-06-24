@@ -3,6 +3,8 @@
 ## Current Phase
 
 - Phase 3: server streaming and backpressure.
+  - Completed in this phase: async buffered response callback and `HttpResponseWriter`.
+  - Remaining in this phase: streaming request body callbacks, response chunk writer API, and explicit high-watermark/backpressure HTTP tests.
 
 ## Completed Phases
 
@@ -43,13 +45,16 @@
 
 - 2026-06-24: Debug build passed.
 - 2026-06-24: `ctest --test-dir build --output-on-failure` passed, 8/8 tests.
+- 2026-06-25: `cmake --build build --parallel` passed.
+- 2026-06-25: `ctest --test-dir build --output-on-failure` passed, 8/8 tests.
 
 ## Latest Commit / Push
 
 - Phase 0 commit pushed: `8c11053`.
 - Phase 1 commit pushed: `38ddbef`.
 - Phase 2 commit pushed: `93ce35c`.
+- Pending Phase 3 async response commit and push.
 
 ## Next Step
 
-- Start Phase 3 with failing streaming/backpressure tests for request body callbacks and `HttpResponseWriter`.
+- Continue Phase 3 with failing tests for streaming request body callbacks and chunked `HttpResponseWriter` response streaming.

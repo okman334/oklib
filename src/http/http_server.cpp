@@ -79,7 +79,9 @@ void HttpServer::on_message(const oklib::net::TcpConnectionPtr& connection,
       return;
     }
 
-    const bool close = on_request(connection, context->request());
+    HttpRequest request = context->take_request();
+    const bool close = async_http_callback_ ? on_async_request(connection, context, std::move(request))
+                                            : on_request(connection, request);
     context->reset();
     if (close || buffer->readable_bytes() == 0) {
       return;
@@ -88,10 +90,7 @@ void HttpServer::on_message(const oklib::net::TcpConnectionPtr& connection,
 }
 
 bool HttpServer::on_request(const oklib::net::TcpConnectionPtr& connection, const HttpRequest& request) {
-  const std::string connection_header = request.header("Connection");
-  const bool close = equals_ignore_case(connection_header, "close") ||
-                     (request.version() == HttpVersion::http10 &&
-                      !equals_ignore_case(connection_header, "Keep-Alive"));
+  const bool close = should_close(request);
 
   HttpResponse response(close);
   http_callback_(request, &response);
@@ -102,6 +101,23 @@ bool HttpServer::on_request(const oklib::net::TcpConnectionPtr& connection, cons
     connection->shutdown();
   }
   return response.close_connection();
+}
+
+bool HttpServer::on_async_request(const oklib::net::TcpConnectionPtr& connection,
+                                  HttpContext* context,
+                                  HttpRequest request) {
+  const bool close = should_close(request);
+  const bool include_body = request.method() != HttpMethod::head;
+  auto writer = context->make_response_writer(connection, close, include_body);
+  async_http_callback_(std::move(request), std::move(writer));
+  return close;
+}
+
+bool HttpServer::should_close(const HttpRequest& request) const {
+  const std::string connection_header = request.header("Connection");
+  return equals_ignore_case(connection_header, "close") ||
+         (request.version() == HttpVersion::http10 &&
+          !equals_ignore_case(connection_header, "Keep-Alive"));
 }
 
 }  // namespace oklib::http

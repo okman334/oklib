@@ -4,6 +4,7 @@
 #include <string>
 
 #include "oklib/base/noncopyable.h"
+#include "oklib/http/http_response_writer.h"
 #include "oklib/net/tcp_server.h"
 
 namespace oklib::http {
@@ -14,12 +15,16 @@ class HttpResponse;
 class HttpServer : private oklib::Noncopyable {
  public:
   using HttpCallback = std::function<void(const HttpRequest&, HttpResponse*)>;
+  using AsyncHttpCallback = std::function<void(HttpRequest, HttpResponseWriter)>;
 
   HttpServer(oklib::net::EventLoop* loop, const oklib::net::InetAddress& listen_address,
              std::string name,
              oklib::net::TcpServer::Option option = oklib::net::TcpServer::Option::no_reuse_port);
 
   void set_http_callback(HttpCallback callback) { http_callback_ = std::move(callback); }
+  void set_async_http_callback(AsyncHttpCallback callback) {
+    async_http_callback_ = std::move(callback);
+  }
   void set_thread_num(int num_threads) { server_.set_thread_num(num_threads); }
   void start();
 
@@ -31,9 +36,14 @@ class HttpServer : private oklib::Noncopyable {
   void on_message(const oklib::net::TcpConnectionPtr& connection, oklib::net::Buffer* buffer,
                   oklib::Timestamp receive_time);
   bool on_request(const oklib::net::TcpConnectionPtr& connection, const HttpRequest& request);
+  bool on_async_request(const oklib::net::TcpConnectionPtr& connection,
+                        HttpContext* context,
+                        HttpRequest request);
+  [[nodiscard]] bool should_close(const HttpRequest& request) const;
 
   oklib::net::TcpServer server_;
   HttpCallback http_callback_;
+  AsyncHttpCallback async_http_callback_;
 };
 
 }  // namespace oklib::http

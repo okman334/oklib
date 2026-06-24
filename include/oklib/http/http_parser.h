@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <utility>
 
 #include "oklib/base/timestamp.h"
 #include "oklib/http/http_headers.h"
@@ -67,6 +68,7 @@ class HttpParser {
   [[nodiscard]] HttpParseError error() const noexcept { return error_; }
   [[nodiscard]] const HttpRequest& request() const noexcept { return request_; }
   [[nodiscard]] HttpRequest& mutable_request() noexcept { return request_; }
+  [[nodiscard]] HttpRequest take_request() { return std::move(request_); }
   [[nodiscard]] const HttpResponseMessage& response() const noexcept { return response_; }
   [[nodiscard]] HttpResponseMessage& mutable_response() noexcept { return response_; }
 
