@@ -87,7 +87,7 @@ class LogStream : private Noncopyable {
 
   static constexpr std::size_t k_inline_buffer_size = 4096;
 
-  char inline_buffer_[k_inline_buffer_size]{};
+  char inline_buffer_[k_inline_buffer_size];
   std::size_t inline_size_{0};
   std::string overflow_;
   IntegerBase integer_base_{IntegerBase::decimal};

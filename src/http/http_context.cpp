@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <string_view>
+#include <utility>
 
 #include "oklib/net/buffer.h"
 
@@ -21,6 +22,7 @@ bool HttpContext::parse_request(oklib::net::Buffer* buffer, oklib::Timestamp rec
           return false;
         }
         request_.set_receive_time(receive_time);
+        request_.set_peer_address(peer_ip_, peer_port_);
         buffer->retrieve_until(crlf + 2);
         state_ = State::expect_headers;
       }
@@ -46,9 +48,16 @@ bool HttpContext::parse_request(oklib::net::Buffer* buffer, oklib::Timestamp rec
   return ok;
 }
 
+void HttpContext::set_peer_address(std::string ip, uint16_t port) {
+  peer_ip_ = std::move(ip);
+  peer_port_ = port;
+  request_.set_peer_address(peer_ip_, peer_port_);
+}
+
 void HttpContext::reset() {
   state_ = State::expect_request_line;
   request_ = HttpRequest();
+  request_.set_peer_address(peer_ip_, peer_port_);
 }
 
 bool HttpContext::process_request_line(const char* begin, const char* end) {

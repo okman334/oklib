@@ -1,6 +1,7 @@
 #include "oklib/http/http_server.h"
 
 #include <any>
+#include <utility>
 
 #include "oklib/http/http_context.h"
 #include "oklib/http/http_request.h"
@@ -37,7 +38,9 @@ void HttpServer::start() {
 
 void HttpServer::on_connection(const oklib::net::TcpConnectionPtr& connection) {
   if (connection->connected()) {
-    connection->set_context(HttpContext());
+    HttpContext context;
+    context.set_peer_address(connection->peer_address().to_ip(), connection->peer_address().port());
+    connection->set_context(std::move(context));
   }
 }
 
@@ -58,17 +61,14 @@ void HttpServer::on_message(const oklib::net::TcpConnectionPtr& connection,
 }
 
 void HttpServer::on_request(const oklib::net::TcpConnectionPtr& connection, const HttpRequest& request) {
-  HttpRequest request_with_connection = request;
-  request_with_connection.set_peer_address(connection->peer_address().to_ip(), connection->peer_address().port());
-
-  const std::string connection_header = request_with_connection.header("Connection");
+  const std::string connection_header = request.header("Connection");
   const bool close = connection_header == "close" ||
-                     (request_with_connection.version() == HttpVersion::http10 && connection_header != "Keep-Alive");
+                     (request.version() == HttpVersion::http10 && connection_header != "Keep-Alive");
 
   HttpResponse response(close);
-  http_callback_(request_with_connection, &response);
+  http_callback_(request, &response);
   oklib::net::Buffer output;
-  response.append_to_buffer(&output, request_with_connection.method() != HttpMethod::head);
+  response.append_to_buffer(&output, request.method() != HttpMethod::head);
   connection->send(&output);
   if (response.close_connection()) {
     connection->shutdown();

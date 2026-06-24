@@ -1,5 +1,8 @@
 #pragma once
 
+#include <cstdint>
+#include <string>
+
 #include "oklib/http/http_request.h"
 
 namespace oklib::net {
@@ -13,6 +16,8 @@ class HttpContext {
   bool parse_request(oklib::net::Buffer* buffer, oklib::Timestamp receive_time);
   [[nodiscard]] bool got_all() const noexcept { return state_ == State::got_all; }
   [[nodiscard]] const HttpRequest& request() const noexcept { return request_; }
+  [[nodiscard]] HttpRequest& mutable_request() noexcept { return request_; }
+  void set_peer_address(std::string ip, uint16_t port);
   void reset();
 
  private:
@@ -26,6 +31,8 @@ class HttpContext {
 
   State state_{State::expect_request_line};
   HttpRequest request_;
+  std::string peer_ip_;
+  uint16_t peer_port_{0};
 };
 
 }  // namespace oklib::http
