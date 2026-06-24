@@ -59,6 +59,7 @@ class HttpParser {
                       HttpParserOptions options = {});
 
   HttpParseStatus parse_request(oklib::net::Buffer* buffer, oklib::Timestamp receive_time);
+  HttpParseStatus parse_request_head(oklib::net::Buffer* buffer, oklib::Timestamp receive_time);
   HttpParseStatus parse_response(oklib::net::Buffer* buffer);
 
   void reset();

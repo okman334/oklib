@@ -15,6 +15,7 @@ enum class HttpStatusCode {
   ok = 200,
   bad_request = 400,
   not_found = 404,
+  not_implemented = 501,
 };
 
 class HttpResponse {

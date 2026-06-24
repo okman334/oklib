@@ -37,6 +37,8 @@ std::string HttpResponse::status_message() const {
       return "Bad Request";
     case HttpStatusCode::not_found:
       return "Not Found";
+    case HttpStatusCode::not_implemented:
+      return "Not Implemented";
     case HttpStatusCode::unknown:
       break;
   }

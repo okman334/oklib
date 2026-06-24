@@ -60,6 +60,25 @@ workers.run([writer] {
 });
 ```
 
+For large `Content-Length` request bodies, register streaming body callbacks:
+
+```cpp
+server.set_streaming_http_callback(
+    [](oklib::http::HttpRequest request,
+       oklib::http::HttpRequestBodyStream body,
+       oklib::http::HttpResponseWriter writer) {
+      body.set_data_callback([](std::string_view chunk) {
+        // Copy or process chunk before the callback returns.
+      });
+      body.set_complete_callback([writer] {
+        auto response = writer.make_response();
+        response.set_status_code(oklib::http::HttpStatusCode::ok);
+        response.set_body("uploaded");
+        writer.send(std::move(response));
+      });
+    });
+```
+
 Run the TCP echo examples:
 
 ```sh

@@ -15,8 +15,10 @@
 #include <chrono>
 #include <functional>
 #include <iostream>
+#include <memory>
 #include <string>
 #include <thread>
+#include <vector>
 
 namespace {
 
@@ -49,6 +51,41 @@ std::string request_once(const std::string& request,
       if (!done && response.find("\r\n\r\n") != std::string::npos &&
           (response.find("Connection: Keep-Alive") != std::string::npos ||
            response.find("Connection: close") != std::string::npos)) {
+        break;
+      }
+    } else {
+      break;
+    }
+  }
+  ::close(fd);
+  loop->queue_in_loop([loop] { loop->quit(); });
+  return response;
+}
+
+std::string request_in_parts(const std::string& first,
+                             const std::string& second,
+                             const oklib::net::InetAddress& address,
+                             oklib::net::EventLoop* loop,
+                             const std::function<bool(const std::string&)>& done = {}) {
+  int fd = ::socket(AF_INET, SOCK_STREAM, 0);
+  require(fd >= 0, "socket succeeds");
+  require(::connect(fd, address.sockaddr_ptr(), address.length()) == 0, "connect succeeds");
+  require(::write(fd, first.data(), first.size()) == static_cast<ssize_t>(first.size()),
+          "first request part succeeds");
+  std::this_thread::sleep_for(std::chrono::milliseconds(50));
+  require(::write(fd, second.data(), second.size()) == static_cast<ssize_t>(second.size()),
+          "second request part succeeds");
+
+  std::string response;
+  char buffer[4096];
+  for (;;) {
+    const auto n = ::read(fd, buffer, sizeof(buffer));
+    if (n > 0) {
+      response.append(buffer, static_cast<std::size_t>(n));
+      if (done && done(response)) {
+        break;
+      }
+      if (!done && response.find("Connection: close") != std::string::npos) {
         break;
       }
     } else {
@@ -136,6 +173,85 @@ std::string run_async_http_case(const std::string& request,
   loop.loop();
   client.join();
   workers.stop();
+  return response;
+}
+
+std::string run_request_streaming_http_case() {
+  oklib::net::EventLoop loop;
+  oklib::http::HttpServer server(&loop, oklib::net::InetAddress::loopback(0), "http-request-stream-test");
+  server.set_streaming_http_callback(
+      [](oklib::http::HttpRequest request,
+         oklib::http::HttpRequestBodyStream body,
+         oklib::http::HttpResponseWriter writer) {
+        require(request.path() == "/stream-body", "streaming request path parsed");
+        require(request.body().empty(), "streaming request body is not buffered");
+
+        auto chunks = std::make_shared<std::vector<std::string>>();
+        body.set_data_callback([chunks](std::string_view chunk) {
+          chunks->push_back(std::string(chunk));
+        });
+        body.set_complete_callback([request = std::move(request), chunks, writer] {
+          auto response = writer.make_response();
+          response.set_status_code(oklib::http::HttpStatusCode::ok);
+          response.add_header("X-Body-Chunks", std::to_string(chunks->size()));
+          response.add_header("X-Query", request.query());
+          response.set_content_type("text/plain");
+
+          std::string joined;
+          for (const auto& chunk : *chunks) {
+            joined += chunk;
+          }
+          response.set_body(std::move(joined));
+          require(writer.send(std::move(response)), "streaming request response sent");
+        });
+      });
+  server.start();
+
+  std::string response;
+  std::jthread client([&] {
+    response = request_in_parts(
+        "POST /stream-body?fixed HTTP/1.1\r\nHost: localhost\r\nContent-Length: 11\r\nConnection: close\r\n\r\nhello ",
+        "world",
+        server.listen_address(),
+        &loop,
+        [](const std::string& value) { return value.find("hello world") != std::string::npos; });
+  });
+  loop.run_after(std::chrono::seconds(2), [&] { loop.quit(); });
+  loop.loop();
+  client.join();
+  return response;
+}
+
+std::string run_chunked_request_streaming_rejection_case() {
+  oklib::net::EventLoop loop;
+  oklib::http::HttpServer server(&loop,
+                                 oklib::net::InetAddress::loopback(0),
+                                 "http-chunked-request-stream-reject-test");
+  bool callback_invoked = false;
+  server.set_streaming_http_callback(
+      [&callback_invoked](oklib::http::HttpRequest,
+                          oklib::http::HttpRequestBodyStream,
+                          oklib::http::HttpResponseWriter) {
+        callback_invoked = true;
+      });
+  server.start();
+
+  std::string response;
+  std::jthread client([&] {
+    response = request_once(
+        "POST /stream-body HTTP/1.1\r\nHost: localhost\r\nTransfer-Encoding: chunked\r\n"
+        "Connection: close\r\n\r\n5\r\nhello\r\n0\r\n\r\n",
+        server.listen_address(),
+        &loop,
+        [](const std::string& value) {
+          return value.find("501 Not Implemented") != std::string::npos;
+        });
+  });
+  loop.run_after(std::chrono::seconds(2), [&] { loop.quit(); });
+  loop.loop();
+  client.join();
+
+  require(!callback_invoked, "unsupported chunked streaming request does not invoke callback");
   return response;
 }
 
@@ -271,6 +387,20 @@ int main() {
           "streamed response includes headers");
   require(streamed_response.find("6\r\nhello \r\n5\r\nworld\r\n1\r\n!\r\n0\r\n\r\n") != std::string::npos,
           "streamed response writes chunk frames in order");
+
+  const auto request_stream_response = run_request_streaming_http_case();
+  require(request_stream_response.find("HTTP/1.1 200 OK") != std::string::npos,
+          "streaming request body returns 200");
+  require(request_stream_response.find("X-Body-Chunks: 2") != std::string::npos,
+          "streaming request body preserves chunk callbacks");
+  require(request_stream_response.find("X-Query: fixed") != std::string::npos,
+          "streaming request keeps parsed request metadata");
+  require(request_stream_response.find("hello world") != std::string::npos,
+          "streaming request body chunks are delivered");
+
+  const auto chunked_request_stream_response = run_chunked_request_streaming_rejection_case();
+  require(chunked_request_stream_response.find("HTTP/1.1 501 Not Implemented") != std::string::npos,
+          "chunked request body streaming is explicitly unsupported");
 
   return 0;
 }

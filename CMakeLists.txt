@@ -59,6 +59,7 @@ add_library(oklib_http STATIC
   src/http/http_context.cpp
   src/http/http_headers.cpp
   src/http/http_parser.cpp
+  src/http/http_request_body_stream.cpp
   src/http/http_request.cpp
   src/http/http_response.cpp
   src/http/http_response_writer.cpp

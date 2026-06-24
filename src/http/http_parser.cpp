@@ -222,6 +222,74 @@ HttpParseStatus HttpParser::parse_request(oklib::net::Buffer* buffer, oklib::Tim
   return parse(buffer, receive_time);
 }
 
+HttpParseStatus HttpParser::parse_request_head(oklib::net::Buffer* buffer, oklib::Timestamp receive_time) {
+  mode_ = HttpParserMode::request;
+  for (;;) {
+    switch (state_) {
+      case State::start_line: {
+        const char* crlf = buffer->find_crlf();
+        if (crlf == nullptr) {
+          if (buffer->readable_bytes() > options_.max_start_line) {
+            set_error(HttpParseError::bad_start_line);
+            return HttpParseStatus::error;
+          }
+          return HttpParseStatus::incomplete;
+        }
+        const auto line_size = static_cast<std::size_t>(crlf - buffer->peek());
+        if (line_size > options_.max_start_line) {
+          set_error(HttpParseError::bad_start_line);
+          return HttpParseStatus::error;
+        }
+        if (!parse_request_line(std::string_view(buffer->peek(), line_size), receive_time)) {
+          return HttpParseStatus::error;
+        }
+        buffer->retrieve_until(crlf + 2);
+        state_ = State::headers;
+        break;
+      }
+      case State::headers: {
+        const char* crlf = buffer->find_crlf();
+        if (crlf == nullptr) {
+          if (header_bytes_ + buffer->readable_bytes() > options_.max_headers) {
+            set_error(HttpParseError::header_too_large);
+            return HttpParseStatus::error;
+          }
+          return HttpParseStatus::incomplete;
+        }
+
+        const auto line_size = static_cast<std::size_t>(crlf - buffer->peek());
+        header_bytes_ += line_size + 2;
+        if (header_bytes_ > options_.max_headers) {
+          set_error(HttpParseError::header_too_large);
+          return HttpParseStatus::error;
+        }
+
+        if (line_size == 0) {
+          buffer->retrieve_until(crlf + 2);
+          if (!finish_headers()) {
+            return HttpParseStatus::error;
+          }
+          return HttpParseStatus::complete;
+        }
+
+        if (!parse_header_line(std::string_view(buffer->peek(), line_size), &request_.mutable_headers())) {
+          return HttpParseStatus::error;
+        }
+        buffer->retrieve_until(crlf + 2);
+        break;
+      }
+      case State::fixed_body:
+      case State::chunk_size:
+      case State::chunk_data:
+      case State::trailers:
+      case State::complete:
+        return HttpParseStatus::complete;
+      case State::error:
+        return HttpParseStatus::error;
+    }
+  }
+}
+
 HttpParseStatus HttpParser::parse_response(oklib::net::Buffer* buffer) {
   mode_ = HttpParserMode::response;
   return parse(buffer, oklib::Timestamp::invalid());
