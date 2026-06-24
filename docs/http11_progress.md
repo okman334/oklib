@@ -10,7 +10,7 @@
 
 - Phase 0: progress tracking and engineering setup.
   - Added `docs/http11_progress.md`.
-  - Commit: `8c11053`.
+  - Commit: `b9e09eb`.
   - Push: `origin/codex/http11-compliance`.
 - Baseline verification on branch `codex/http11-compliance`.
   - `cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug`: passed.
@@ -21,13 +21,13 @@
   - Extended `HttpRequest` with method token, request-target form, body, content length, and trailers.
   - Added `HttpParser` for incremental request/response parsing, fixed-length body, chunked body, trailers, pipeline leftover, and strict ambiguous framing rejection.
   - Added `oklib.http.parser` tests.
-  - Commit: `38ddbef`.
+  - Commit: `5e44d7b`.
   - Push: `origin/codex/http11-compliance`.
 - Phase 2: buffered `HttpServer` upgrade.
   - Routed `HttpContext` through `HttpParser`.
   - `HttpServer` now supports buffered Content-Length request bodies, chunked request bodies, trailers, Host validation, ambiguous framing rejection, and multiple pipelined requests in one read buffer.
   - Added integration coverage in `oklib.http`.
-  - Commit: `93ce35c`.
+  - Commit: `eb42d8c`.
   - Push: `origin/codex/http11-compliance`.
 
 ## Incomplete Phases
@@ -50,10 +50,10 @@
 
 ## Latest Commit / Push
 
-- Phase 0 commit pushed: `8c11053`.
-- Phase 1 commit pushed: `38ddbef`.
-- Phase 2 commit pushed: `93ce35c`.
-- Phase 3 async response commit: `b55cdce`.
+- Phase 0 commit pushed: `b9e09eb`.
+- Phase 1 commit pushed: `5e44d7b`.
+- Phase 2 commit pushed: `eb42d8c`.
+- Phase 3 async response commit: `69c37d6`.
 
 ## Next Step
 
