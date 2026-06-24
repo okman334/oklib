@@ -53,7 +53,7 @@
 - Phase 0 commit pushed: `8c11053`.
 - Phase 1 commit pushed: `38ddbef`.
 - Phase 2 commit pushed: `93ce35c`.
-- Pending Phase 3 async response commit and push.
+- Phase 3 async response commit: `b55cdce`.
 
 ## Next Step
 
