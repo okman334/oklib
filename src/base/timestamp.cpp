@@ -18,9 +18,9 @@ std::string Timestamp::to_formatted_string(bool show_microseconds) const {
   const std::time_t seconds = seconds_since_epoch();
   std::tm tm{};
 #if defined(_WIN32)
-  gmtime_s(&tm, &seconds);
+  localtime_s(&tm, &seconds);
 #else
-  gmtime_r(&seconds, &tm);
+  localtime_r(&seconds, &tm);
 #endif
   std::ostringstream out;
   out << std::put_time(&tm, "%Y-%m-%d %H:%M:%S");

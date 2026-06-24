@@ -9,6 +9,8 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cstdlib>
+#include <ctime>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -18,6 +20,31 @@
 #include <vector>
 
 namespace {
+
+class ScopedTimeZone {
+ public:
+  explicit ScopedTimeZone(const char* timezone) {
+    if (const char* current = std::getenv("TZ"); current != nullptr) {
+      original_ = current;
+      had_original_ = true;
+    }
+    setenv("TZ", timezone, 1);
+    tzset();
+  }
+
+  ~ScopedTimeZone() {
+    if (had_original_) {
+      setenv("TZ", original_.c_str(), 1);
+    } else {
+      unsetenv("TZ");
+    }
+    tzset();
+  }
+
+ private:
+  std::string original_;
+  bool had_original_{false};
+};
 
 void require(bool condition, const char* message) {
   if (!condition) {
@@ -79,6 +106,12 @@ int main() {
   const auto now = oklib::Timestamp::now();
   require(now.valid(), "Timestamp::now is valid");
   require(!now.to_string().empty(), "Timestamp string is non-empty");
+  {
+    ScopedTimeZone timezone("HKT-8");
+    const auto local_epoch = oklib::Timestamp::from_unix_time(0, 123456);
+    require(local_epoch.to_formatted_string() == "1970-01-01 08:00:00.123456",
+            "timestamp formatted string uses local timezone");
+  }
 
   oklib::LogStream stream;
   stream << "answer=" << 42 << ' ' << std::string_view("ok");
