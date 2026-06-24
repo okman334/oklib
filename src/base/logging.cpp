@@ -8,6 +8,7 @@
 #include <iostream>
 #include <map>
 #include <mutex>
+#include <sstream>
 #include <vector>
 #include <thread>
 #include <utility>
@@ -47,6 +48,15 @@ std::string current_program_name() {
   }
 #endif
   return "oklib";
+}
+
+const std::string& current_thread_id_string() {
+  thread_local const std::string id = [] {
+    std::ostringstream stream;
+    stream << std::this_thread::get_id();
+    return stream.str();
+  }();
+  return id;
 }
 
 std::mutex& config_mutex() {
@@ -272,7 +282,7 @@ AsyncFileLogger& async_file_logger() {
 
 Logger::Logger(Level level, const char* file, int line) : level_(level) {
   stream_ << Timestamp::now().to_formatted_string() << ' ' << level_name(level_) << ' '
-          << std::this_thread::get_id() << ' ' << basename(file) << ':' << line << " - ";
+          << current_thread_id_string() << ' ' << basename(file) << ':' << line << " - ";
 }
 
 Logger::~Logger() {

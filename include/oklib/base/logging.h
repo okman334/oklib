@@ -4,10 +4,11 @@
 #include <functional>
 #include <filesystem>
 #include <ostream>
-#include <sstream>
 #include <string>
 #include <string_view>
+#include <utility>
 
+#include "oklib/base/log_stream.h"
 #include "oklib/base/noncopyable.h"
 #include "oklib/base/timestamp.h"
 
@@ -36,9 +37,9 @@ class Logger : private Noncopyable {
     return *this;
   }
 
-  using StreamManipulator = std::ostream& (*)(std::ostream&);
+  using StreamManipulator = LogStream::StreamManipulator;
   Logger& operator<<(StreamManipulator manipulator) {
-    manipulator(stream_);
+    stream_ << manipulator;
     return *this;
   }
 
@@ -63,7 +64,7 @@ class Logger : private Noncopyable {
   static const char* basename(const char* path) noexcept;
 
   Level level_;
-  std::ostringstream stream_;
+  LogStream stream_;
 };
 
 }  // namespace oklib

@@ -1,5 +1,6 @@
 #include <oklib/base/blocking_queue.h>
 #include <oklib/base/countdown_latch.h>
+#include <oklib/base/log_stream.h>
 #include <oklib/base/logging.h>
 #include <oklib/base/noncopyable.h>
 #include <oklib/base/thread_pool.h>
@@ -48,6 +49,14 @@ int main() {
   const auto now = oklib::Timestamp::now();
   require(now.valid(), "Timestamp::now is valid");
   require(!now.to_string().empty(), "Timestamp string is non-empty");
+
+  oklib::LogStream stream;
+  stream << "answer=" << 42 << ' ' << std::string_view("ok");
+  require(stream.str() == "answer=42 ok", "log stream formats common values");
+  oklib::LogStream large_stream;
+  const std::string large_payload(5000, 'x');
+  large_stream << large_payload;
+  require(large_stream.str() == large_payload, "log stream grows beyond inline buffer");
 
   std::string captured;
   oklib::Logger::set_output([&](std::string_view message) { captured.assign(message); });

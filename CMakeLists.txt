@@ -18,6 +18,7 @@ endif()
 
 add_library(oklib_base STATIC
   src/base/countdown_latch.cpp
+  src/base/log_stream.cpp
   src/base/logging.cpp
   src/base/thread_pool.cpp
   src/base/timestamp.cpp)
