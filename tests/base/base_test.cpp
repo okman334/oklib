@@ -6,6 +6,7 @@
 #include <oklib/base/thread_pool.h>
 #include <oklib/base/timestamp.h>
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <filesystem>
@@ -41,6 +42,30 @@ bool wait_for_file_contains(const std::filesystem::path& path,
     std::this_thread::sleep_for(std::chrono::milliseconds(10));
   }
   return false;
+}
+
+std::vector<std::filesystem::path> log_files_with_prefix(const std::filesystem::path& directory,
+                                                         const std::string& prefix) {
+  std::vector<std::filesystem::path> files;
+  for (const auto& entry : std::filesystem::directory_iterator(directory)) {
+    if (!entry.is_regular_file()) {
+      continue;
+    }
+    const auto filename = entry.path().filename().string();
+    if (filename.starts_with(prefix) && filename.ends_with(".log")) {
+      files.push_back(entry.path());
+    }
+  }
+  std::sort(files.begin(), files.end());
+  return files;
+}
+
+std::string read_files(const std::vector<std::filesystem::path>& files) {
+  std::string content;
+  for (const auto& file : files) {
+    content += read_file(file);
+  }
+  return content;
 }
 
 }  // namespace
@@ -111,6 +136,26 @@ int main() {
   keep_logging = false;
   noisy_logger.join();
   oklib::Logger::flush();
+
+  const auto rolling_dir = std::filesystem::temp_directory_path() /
+                           ("oklib-logger-rolling-test-" +
+                            std::to_string(now.microseconds_since_epoch()));
+  std::filesystem::create_directories(rolling_dir);
+  oklib::Logger::set_log_directory(rolling_dir);
+  oklib::Logger::set_file_basename("rolling-base");
+  oklib::Logger::set_roll_size(512);
+  require(oklib::Logger::roll_size() == 512, "roll size is configurable");
+  for (int i = 0; i < 40; ++i) {
+    OKLIB_LOG_INFO << "rolling-message-" << i << ' ' << std::string(80, 'x');
+  }
+  oklib::Logger::flush();
+  const auto rolled_files = log_files_with_prefix(rolling_dir, "rolling-base.info");
+  require(rolled_files.size() >= 2, "logger rolls info file when configured size is exceeded");
+  const auto rolled_content = read_files(rolled_files);
+  require(rolled_content.find("rolling-message-0") != std::string::npos,
+          "rolled logs contain first message");
+  require(rolled_content.find("rolling-message-39") != std::string::npos,
+          "rolled logs contain last message");
 
   oklib::CountDownLatch latch(2);
   std::jthread t1([&] { latch.count_down(); });

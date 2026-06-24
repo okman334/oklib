@@ -1,6 +1,7 @@
 #pragma once
 
 #include <chrono>
+#include <cstdint>
 #include <functional>
 #include <filesystem>
 #include <ostream>
@@ -56,6 +57,8 @@ class Logger : private Noncopyable {
   static std::string file_basename();
   static void set_flush_interval(std::chrono::milliseconds interval);
   static std::chrono::milliseconds flush_interval();
+  static void set_roll_size(std::uintmax_t bytes);
+  static std::uintmax_t roll_size();
   static void flush();
 
  private:
