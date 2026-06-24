@@ -16,6 +16,8 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
   set(CMAKE_BUILD_TYPE RelWithDebInfo CACHE STRING "Build type" FORCE)
 endif()
 
+find_package(Threads REQUIRED)
+
 add_library(oklib_base STATIC
   src/base/countdown_latch.cpp
   src/base/log_stream.cpp
@@ -28,6 +30,7 @@ target_include_directories(oklib_base
     $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
     $<INSTALL_INTERFACE:include>)
 target_compile_features(oklib_base PUBLIC cxx_std_20)
+target_link_libraries(oklib_base PUBLIC Threads::Threads)
 
 add_library(oklib_net STATIC
   src/net/acceptor.cpp
