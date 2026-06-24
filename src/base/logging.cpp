@@ -23,7 +23,8 @@ namespace oklib {
 namespace {
 
 constexpr std::size_t k_log_buffer_flush_size = 4 * 1024 * 1024;
-constexpr auto k_flush_interval = std::chrono::seconds(3);
+constexpr auto k_default_flush_interval = std::chrono::seconds(3);
+constexpr auto k_min_flush_interval = std::chrono::milliseconds(1);
 
 std::string path_basename(std::string_view path) {
   std::size_t pos = path.find_last_of("/\\");
@@ -71,6 +72,12 @@ std::filesystem::path& log_directory_storage() {
 std::string& file_basename_storage() {
   static std::string basename = current_program_name();
   return basename;
+}
+
+std::chrono::milliseconds& flush_interval_storage() {
+  static std::chrono::milliseconds interval =
+      std::chrono::duration_cast<std::chrono::milliseconds>(k_default_flush_interval);
+  return interval;
 }
 
 std::string level_suffix(Logger::Level level) {
@@ -128,6 +135,14 @@ class AsyncFileLogger : private Noncopyable {
     cv_.wait(lock, [this, generation] { return flushed_generation_ >= generation; });
   }
 
+  void notify_flush_interval_changed() {
+    {
+      std::lock_guard lock(mutex_);
+      ++interval_generation_;
+    }
+    cv_.notify_one();
+  }
+
  private:
   void stop() {
     {
@@ -154,6 +169,9 @@ class AsyncFileLogger : private Noncopyable {
   void run() {
     std::map<std::filesystem::path, std::string> buffers;
     std::map<std::filesystem::path, std::ofstream> streams;
+    using Clock = std::chrono::steady_clock;
+    auto next_flush = Clock::now() + Logger::flush_interval();
+    std::uint64_t observed_interval_generation = 0;
 
     for (;;) {
       std::vector<Event> events;
@@ -161,14 +179,22 @@ class AsyncFileLogger : private Noncopyable {
       std::uint64_t flush_generation = 0;
       {
         std::unique_lock lock(mutex_);
-        bool timed_out = false;
-        if (!stopping_ && pending_.empty() && !flush_requested_) {
-          timed_out = cv_.wait_for(lock, k_flush_interval) == std::cv_status::timeout;
+        cv_.wait_until(lock, next_flush, [this, observed_interval_generation] {
+          return stopping_ || flush_requested_ || !pending_.empty() ||
+                 interval_generation_ != observed_interval_generation;
+        });
+        if (interval_generation_ != observed_interval_generation) {
+          observed_interval_generation = interval_generation_;
+          next_flush = Clock::now() + Logger::flush_interval();
         }
+        const bool interval_due = Clock::now() >= next_flush;
         events.swap(pending_);
-        force_flush = flush_requested_ || stopping_ || timed_out;
+        force_flush = flush_requested_ || stopping_ || interval_due;
         flush_generation = flush_generation_;
         flush_requested_ = false;
+        if (interval_due) {
+          next_flush = Clock::now() + Logger::flush_interval();
+        }
       }
 
       for (auto& event : events) {
@@ -234,6 +260,7 @@ class AsyncFileLogger : private Noncopyable {
   bool flush_requested_{false};
   std::uint64_t flush_generation_{0};
   std::uint64_t flushed_generation_{0};
+  std::uint64_t interval_generation_{0};
 };
 
 AsyncFileLogger& async_file_logger() {
@@ -304,6 +331,22 @@ std::filesystem::path Logger::log_directory() {
 std::string Logger::file_basename() {
   std::lock_guard lock(config_mutex());
   return file_basename_storage();
+}
+
+void Logger::set_flush_interval(std::chrono::milliseconds interval) {
+  if (interval < k_min_flush_interval) {
+    interval = k_min_flush_interval;
+  }
+  {
+    std::lock_guard lock(config_mutex());
+    flush_interval_storage() = interval;
+  }
+  async_file_logger().notify_flush_interval_changed();
+}
+
+std::chrono::milliseconds Logger::flush_interval() {
+  std::lock_guard lock(config_mutex());
+  return flush_interval_storage();
 }
 
 void Logger::flush() {

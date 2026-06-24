@@ -29,6 +29,19 @@ std::string read_file(const std::filesystem::path& path) {
   return std::string(std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>());
 }
 
+bool wait_for_file_contains(const std::filesystem::path& path,
+                            const std::string& needle,
+                            std::chrono::milliseconds timeout) {
+  const auto deadline = std::chrono::steady_clock::now() + timeout;
+  while (std::chrono::steady_clock::now() < deadline) {
+    if (read_file(path).find(needle) != std::string::npos) {
+      return true;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
+  return false;
+}
+
 }  // namespace
 
 int main() {
@@ -64,6 +77,31 @@ int main() {
           "warn log writes to custom warn file");
   require(info_log.find("warn-file-message") == std::string::npos,
           "warn log is separated from info log");
+
+  const auto periodic_dir = std::filesystem::temp_directory_path() /
+                            ("oklib-logger-periodic-test-" +
+                             std::to_string(now.microseconds_since_epoch()));
+  std::filesystem::create_directories(periodic_dir);
+  oklib::Logger::set_log_directory(periodic_dir);
+  oklib::Logger::set_file_basename("periodic-base");
+  oklib::Logger::set_flush_interval(std::chrono::milliseconds(50));
+  require(oklib::Logger::flush_interval() == std::chrono::milliseconds(50),
+          "flush interval is configurable");
+  std::atomic<bool> keep_logging{true};
+  std::jthread noisy_logger([&] {
+    while (keep_logging.load(std::memory_order_relaxed)) {
+      OKLIB_LOG_INFO << "periodic-noise";
+      std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+  });
+  OKLIB_LOG_INFO << "periodic-target";
+  require(wait_for_file_contains(periodic_dir / "periodic-base.info.log",
+                                 "periodic-target",
+                                 std::chrono::milliseconds(500)),
+          "logger flushes on interval even while logs continue");
+  keep_logging = false;
+  noisy_logger.join();
+  oklib::Logger::flush();
 
   oklib::CountDownLatch latch(2);
   std::jthread t1([&] { latch.count_down(); });

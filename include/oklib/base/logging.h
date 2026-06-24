@@ -1,5 +1,6 @@
 #pragma once
 
+#include <chrono>
 #include <functional>
 #include <filesystem>
 #include <ostream>
@@ -52,6 +53,8 @@ class Logger : private Noncopyable {
   static void set_file_basename(std::string basename);
   static std::filesystem::path log_directory();
   static std::string file_basename();
+  static void set_flush_interval(std::chrono::milliseconds interval);
+  static std::chrono::milliseconds flush_interval();
   static void flush();
 
  private:
