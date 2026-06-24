@@ -2,7 +2,7 @@
 
 ## Current Phase
 
-- Phase 2: buffered `HttpServer` upgrade.
+- Phase 3: server streaming and backpressure.
 
 ## Completed Phases
 
@@ -25,6 +25,8 @@
   - Routed `HttpContext` through `HttpParser`.
   - `HttpServer` now supports buffered Content-Length request bodies, chunked request bodies, trailers, Host validation, ambiguous framing rejection, and multiple pipelined requests in one read buffer.
   - Added integration coverage in `oklib.http`.
+  - Commit: `93ce35c`.
+  - Push: `origin/codex/http11-compliance`.
 
 ## Incomplete Phases
 
@@ -46,7 +48,7 @@
 
 - Phase 0 commit pushed: `8c11053`.
 - Phase 1 commit pushed: `38ddbef`.
-- Pending Phase 2 commit and push.
+- Phase 2 commit pushed: `93ce35c`.
 
 ## Next Step
 
