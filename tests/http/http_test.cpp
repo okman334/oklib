@@ -139,6 +139,44 @@ std::string run_async_http_case(const std::string& request,
   return response;
 }
 
+std::string run_streaming_http_case(const std::string& request) {
+  oklib::net::EventLoop loop;
+  oklib::ThreadPool workers("http-stream-worker-test");
+  workers.start(1);
+
+  oklib::http::HttpServer server(&loop, oklib::net::InetAddress::loopback(0), "http-stream-test");
+  server.set_async_http_callback(
+      [&workers](oklib::http::HttpRequest req, oklib::http::HttpResponseWriter writer) {
+        workers.run([request = std::move(req), writer] {
+          auto response = writer.make_response();
+          response.set_status_code(oklib::http::HttpStatusCode::ok);
+          response.add_header("X-Stream", request.query());
+          response.set_content_type("text/plain");
+
+          require(writer.start_chunked(std::move(response)), "chunked stream starts");
+          require(writer.write_chunk("hello "), "first chunk sent");
+          std::this_thread::sleep_for(std::chrono::milliseconds(10));
+          require(writer.write_chunk("world"), "second chunk sent");
+          require(writer.write_chunk("!"), "third chunk sent");
+          require(writer.finish(), "chunked stream finishes");
+          require(!writer.write_chunk("after-finish"), "chunked stream rejects writes after finish");
+        });
+      });
+  server.start();
+
+  std::string response;
+  std::jthread client([&] {
+    response = request_once(request, server.listen_address(), &loop, [](const std::string& value) {
+      return value.find("0\r\n\r\n") != std::string::npos;
+    });
+  });
+  loop.run_after(std::chrono::seconds(2), [&] { loop.quit(); });
+  loop.loop();
+  client.join();
+  workers.stop();
+  return response;
+}
+
 }  // namespace
 
 int main() {
@@ -221,6 +259,18 @@ int main() {
   require(one_pos != std::string::npos, "first async pipelined response returned");
   require(two_pos != std::string::npos, "second async pipelined response returned");
   require(one_pos < two_pos, "async pipelined responses keep request order");
+
+  const auto streamed_response =
+      run_streaming_http_case("GET /stream?chunked HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
+  require(streamed_response.find("HTTP/1.1 200 OK") != std::string::npos, "streamed response returns 200");
+  require(streamed_response.find("Transfer-Encoding: chunked") != std::string::npos,
+          "streamed response uses chunked encoding");
+  require(streamed_response.find("Content-Length:") == std::string::npos,
+          "streamed response omits content length");
+  require(streamed_response.find("X-Stream: chunked") != std::string::npos,
+          "streamed response includes headers");
+  require(streamed_response.find("6\r\nhello \r\n5\r\nworld\r\n1\r\n!\r\n0\r\n\r\n") != std::string::npos,
+          "streamed response writes chunk frames in order");
 
   return 0;
 }

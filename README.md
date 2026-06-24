@@ -45,6 +45,21 @@ server.set_async_http_callback(
     });
 ```
 
+For large responses, stream HTTP/1.1 chunks instead of building one large body:
+
+```cpp
+workers.run([writer] {
+  auto response = writer.make_response();
+  response.set_status_code(oklib::http::HttpStatusCode::ok);
+  response.set_content_type("text/plain");
+
+  writer.start_chunked(std::move(response));
+  writer.write_chunk("part one\n");
+  writer.write_chunk("part two\n");
+  writer.finish();
+});
+```
+
 Run the TCP echo examples:
 
 ```sh

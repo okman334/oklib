@@ -3,6 +3,8 @@
 #include <atomic>
 #include <cstddef>
 #include <memory>
+#include <string>
+#include <string_view>
 
 #include "oklib/http/http_response.h"
 #include "oklib/net/callbacks.h"
@@ -23,6 +25,9 @@ class HttpResponseWriter {
   [[nodiscard]] HttpResponse make_response() const { return HttpResponse(close_connection_); }
 
   bool send(HttpResponse response) const;
+  bool start_chunked(HttpResponse response) const;
+  bool write_chunk(std::string_view data) const;
+  bool finish() const;
 
  private:
   struct State;
@@ -33,14 +38,16 @@ class HttpResponseWriter {
 
   static StatePtr make_state(const oklib::net::TcpConnectionPtr& connection);
   static void flush_ready_responses(const StatePtr& state);
+  static std::string encode_chunk(std::string_view data);
 
   HttpResponseWriter(StatePtr state, std::size_t sequence, bool close_connection, bool include_body);
+  bool enqueue(std::string bytes, bool finished, bool close_connection) const;
 
   StatePtr state_;
   std::size_t sequence_{0};
   bool close_connection_{false};
   bool include_body_{true};
-  std::shared_ptr<std::atomic_bool> sent_;
+  std::shared_ptr<std::atomic<int>> write_state_;
 };
 
 }  // namespace oklib::http

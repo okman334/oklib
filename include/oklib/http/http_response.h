@@ -31,6 +31,7 @@ class HttpResponse {
   void set_body(std::string body) { body_ = std::move(body); }
   [[nodiscard]] const std::string& body() const noexcept { return body_; }
 
+  void append_headers_to_buffer(oklib::net::Buffer* output, bool chunked = false) const;
   void append_to_buffer(oklib::net::Buffer* output, bool include_body = true) const;
 
  private:
