@@ -1,23 +1,43 @@
 #include "oklib/http/http_request.h"
 
-#include <algorithm>
+#include <cctype>
 
 namespace oklib::http {
 namespace {
 
-std::string trim(std::string_view value) {
-  while (!value.empty() && (value.front() == ' ' || value.front() == '\t')) {
-    value.remove_prefix(1);
+bool is_token_char(char c) noexcept {
+  const auto ch = static_cast<unsigned char>(c);
+  if (std::isalnum(ch)) {
+    return true;
   }
-  while (!value.empty() && (value.back() == ' ' || value.back() == '\t')) {
-    value.remove_suffix(1);
+  switch (c) {
+    case '!':
+    case '#':
+    case '$':
+    case '%':
+    case '&':
+    case '\'':
+    case '*':
+    case '+':
+    case '-':
+    case '.':
+    case '^':
+    case '_':
+    case '`':
+    case '|':
+    case '~':
+      return true;
+    default:
+      return false;
   }
-  return std::string(value);
 }
 
 }  // namespace
 
 std::string HttpRequest::method_string() const {
+  if (!method_token_.empty()) {
+    return method_token_;
+  }
   switch (method_) {
     case HttpMethod::get:
       return "GET";
@@ -29,6 +49,14 @@ std::string HttpRequest::method_string() const {
       return "PUT";
     case HttpMethod::delete_:
       return "DELETE";
+    case HttpMethod::options:
+      return "OPTIONS";
+    case HttpMethod::trace:
+      return "TRACE";
+    case HttpMethod::connect:
+      return "CONNECT";
+    case HttpMethod::patch:
+      return "PATCH";
     case HttpMethod::invalid:
       break;
   }
@@ -36,6 +64,20 @@ std::string HttpRequest::method_string() const {
 }
 
 bool HttpRequest::set_method(std::string_view method) {
+  if (method.empty()) {
+    method_ = HttpMethod::invalid;
+    method_token_.clear();
+    return false;
+  }
+  for (const char c : method) {
+    if (!is_token_char(c)) {
+      method_ = HttpMethod::invalid;
+      method_token_.clear();
+      return false;
+    }
+  }
+
+  method_token_.assign(method);
   if (method == "GET") {
     method_ = HttpMethod::get;
   } else if (method == "HEAD") {
@@ -46,22 +88,30 @@ bool HttpRequest::set_method(std::string_view method) {
     method_ = HttpMethod::put;
   } else if (method == "DELETE") {
     method_ = HttpMethod::delete_;
+  } else if (method == "OPTIONS") {
+    method_ = HttpMethod::options;
+  } else if (method == "TRACE") {
+    method_ = HttpMethod::trace;
+  } else if (method == "CONNECT") {
+    method_ = HttpMethod::connect;
+  } else if (method == "PATCH") {
+    method_ = HttpMethod::patch;
   } else {
     method_ = HttpMethod::invalid;
   }
-  return method_ != HttpMethod::invalid;
+  return true;
+}
+
+void HttpRequest::set_target(std::string_view target) {
+  target_.assign(target);
 }
 
 void HttpRequest::add_header(std::string_view field, std::string_view value) {
-  headers_[trim(field)] = trim(value);
+  headers_.add(field, value);
 }
 
 std::string HttpRequest::header(std::string_view field) const {
-  auto it = headers_.find(std::string(field));
-  if (it == headers_.end()) {
-    return {};
-  }
-  return it->second;
+  return headers_.get(field);
 }
 
 }  // namespace oklib::http
