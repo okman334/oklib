@@ -58,14 +58,17 @@ void HttpServer::on_message(const oklib::net::TcpConnectionPtr& connection,
 }
 
 void HttpServer::on_request(const oklib::net::TcpConnectionPtr& connection, const HttpRequest& request) {
-  const std::string connection_header = request.header("Connection");
+  HttpRequest request_with_connection = request;
+  request_with_connection.set_peer_address(connection->peer_address().to_ip(), connection->peer_address().port());
+
+  const std::string connection_header = request_with_connection.header("Connection");
   const bool close = connection_header == "close" ||
-                     (request.version() == HttpVersion::http10 && connection_header != "Keep-Alive");
+                     (request_with_connection.version() == HttpVersion::http10 && connection_header != "Keep-Alive");
 
   HttpResponse response(close);
-  http_callback_(request, &response);
+  http_callback_(request_with_connection, &response);
   oklib::net::Buffer output;
-  response.append_to_buffer(&output, request.method() != HttpMethod::head);
+  response.append_to_buffer(&output, request_with_connection.method() != HttpMethod::head);
   connection->send(&output);
   if (response.close_connection()) {
     connection->shutdown();

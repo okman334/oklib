@@ -64,6 +64,10 @@ std::string run_http_case(const std::string& request) {
       response->set_status_code(oklib::http::HttpStatusCode::ok);
       response->add_header("X-Query", req.query());
       response->set_body(req.header("X-Test"));
+    } else if (req.path() == "/peer") {
+      response->set_status_code(oklib::http::HttpStatusCode::ok);
+      response->add_header("X-Peer-IP", req.peer_ip());
+      response->set_body(req.peer_address());
     } else {
       response->set_status_code(oklib::http::HttpStatusCode::not_found);
       response->set_body("missing");
@@ -96,6 +100,10 @@ int main() {
       run_http_case("GET /query?name=oklib HTTP/1.1\r\nHost: localhost\r\nX-Test: value\r\n\r\n");
   require(query_response.find("X-Query: name=oklib") != std::string::npos, "query string parsed");
   require(query_response.find("value") != std::string::npos, "headers parsed");
+
+  const auto peer_response = run_http_case("GET /peer HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
+  require(peer_response.find("X-Peer-IP: 127.0.0.1") != std::string::npos, "peer ip exposed");
+  require(peer_response.find("127.0.0.1:") != std::string::npos, "peer address exposed");
 
   const auto not_found = run_http_case("GET /missing HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
   require(not_found.find("HTTP/1.1 404 Not Found") != std::string::npos, "unknown path returns 404");
