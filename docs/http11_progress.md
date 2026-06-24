@@ -3,8 +3,8 @@
 ## Current Phase
 
 - Phase 3: server streaming and backpressure.
-  - Completed in this phase: async buffered response callback, `HttpResponseWriter`, and chunked response streaming.
-  - Remaining in this phase: streaming request body callbacks and explicit high-watermark/backpressure HTTP tests.
+  - Completed in this phase: async buffered response callback, `HttpResponseWriter`, chunked response streaming, Content-Length request body streaming callbacks, and explicit `501 Not Implemented` handling for chunked request streaming while it is unsupported.
+  - Remaining in this phase: chunked request body streaming and explicit high-watermark/backpressure HTTP tests.
 
 ## Completed Phases
 
@@ -49,6 +49,9 @@
 - 2026-06-25: `ctest --test-dir build --output-on-failure` passed, 8/8 tests.
 - 2026-06-25: `cmake --build build --parallel` passed after chunked response streaming.
 - 2026-06-25: `ctest --test-dir build --output-on-failure` passed, 8/8 tests after chunked response streaming.
+- 2026-06-25: `oklib.http` Content-Length request body streaming integration test passed locally.
+- 2026-06-25: `cmake --build build --parallel` passed after Content-Length request streaming.
+- 2026-06-25: `ctest --test-dir build --output-on-failure` passed, 8/8 tests after Content-Length request streaming and chunked streaming rejection guard.
 
 ## Latest Commit / Push
 
@@ -57,7 +60,9 @@
 - Phase 2 commit pushed: `eb42d8c`.
 - Phase 3 async response commit: `69c37d6`.
 - Phase 3 chunked response streaming commit: `710a4cb`.
+- Phase 3 request body streaming commit: `d8b6cb5`.
+- Push: `origin/codex/http11-compliance`.
 
 ## Next Step
 
-- Continue Phase 3 with failing tests for streaming request body callbacks and explicit high-watermark/backpressure behavior.
+- Continue Phase 3 with failing tests for chunked request body streaming or explicit high-watermark/backpressure behavior.
