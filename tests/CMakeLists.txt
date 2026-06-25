@@ -62,6 +62,14 @@ add_executable(oklib_http_cache_test http/http_cache_test.cpp)
 target_link_libraries(oklib_http_cache_test PRIVATE oklib::http)
 add_test(NAME oklib.http.cache COMMAND oklib_http_cache_test)
 
+add_executable(oklib_websocket_core_test websocket/websocket_core_test.cpp)
+target_link_libraries(oklib_websocket_core_test PRIVATE oklib::websocket)
+add_test(NAME oklib.websocket.core COMMAND oklib_websocket_core_test)
+
+add_executable(oklib_websocket_integration_test websocket/websocket_integration_test.cpp)
+target_link_libraries(oklib_websocket_integration_test PRIVATE oklib::websocket)
+add_test(NAME oklib.websocket.integration COMMAND oklib_websocket_integration_test)
+
 add_test(
   NAME oklib.example.tcp_echo_server_logging
   COMMAND ${CMAKE_COMMAND}

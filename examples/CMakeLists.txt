@@ -13,6 +13,12 @@ target_link_libraries(oklib_http_sync_client_demo PRIVATE oklib::http)
 add_executable(oklib_http_benchmark http_benchmark.cpp)
 target_link_libraries(oklib_http_benchmark PRIVATE oklib::http)
 
+add_executable(oklib_websocket_server websocket_server.cpp)
+target_link_libraries(oklib_websocket_server PRIVATE oklib::websocket)
+
+add_executable(oklib_websocket_client websocket_client.cpp)
+target_link_libraries(oklib_websocket_client PRIVATE oklib::websocket)
+
 if(OKLIB_ENABLE_TLS)
   add_executable(oklib_https_server https_server.cpp)
   target_link_libraries(oklib_https_server PRIVATE oklib::http)

@@ -8,6 +8,7 @@ project(oklib
 option(OKLIB_BUILD_TESTS "Build oklib tests" ON)
 option(OKLIB_BUILD_EXAMPLES "Build oklib examples" ON)
 option(OKLIB_ENABLE_TLS "Enable optional OpenSSL TLS support" OFF)
+option(OKLIB_ENABLE_WEBSOCKET_COMPRESSION "Enable optional WebSocket permessage-deflate support" OFF)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -20,6 +21,9 @@ endif()
 find_package(Threads REQUIRED)
 if(OKLIB_ENABLE_TLS)
   find_package(OpenSSL REQUIRED)
+endif()
+if(OKLIB_ENABLE_WEBSOCKET_COMPRESSION)
+  find_package(ZLIB REQUIRED)
 endif()
 
 add_library(oklib_base STATIC
@@ -88,6 +92,28 @@ target_include_directories(oklib_http
     $<INSTALL_INTERFACE:include>)
 target_compile_features(oklib_http PUBLIC cxx_std_20)
 target_compile_definitions(oklib_http PUBLIC OKLIB_ENABLE_TLS=$<BOOL:${OKLIB_ENABLE_TLS}>)
+
+add_library(oklib_websocket STATIC
+  src/websocket/websocket_channel.cpp
+  src/websocket/websocket_client.cpp
+  src/websocket/websocket_compression.cpp
+  src/websocket/websocket_frame.cpp
+  src/websocket/websocket_handshake.cpp
+  src/websocket/websocket_server.cpp)
+add_library(oklib::websocket ALIAS oklib_websocket)
+target_link_libraries(oklib_websocket PUBLIC oklib::http)
+if(OKLIB_ENABLE_WEBSOCKET_COMPRESSION)
+  target_link_libraries(oklib_websocket PUBLIC ZLIB::ZLIB)
+endif()
+target_include_directories(oklib_websocket
+  PUBLIC
+    $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:include>)
+target_compile_features(oklib_websocket PUBLIC cxx_std_20)
+target_compile_definitions(oklib_websocket
+  PUBLIC
+    OKLIB_ENABLE_TLS=$<BOOL:${OKLIB_ENABLE_TLS}>
+    OKLIB_ENABLE_WEBSOCKET_COMPRESSION=$<BOOL:${OKLIB_ENABLE_WEBSOCKET_COMPRESSION}>)
 
 if(OKLIB_BUILD_TESTS)
   enable_testing()
