@@ -2,8 +2,8 @@
 
 ## Current Phase
 
-- Next Phase B: `HttpClient` private in-process cache integration.
-  - Next scope: opt-in buffered GET/HEAD cache, fresh hit, revalidation, Vary matching, and LRU/body limits.
+- Next Phase C: optional OpenSSL TLS client/server.
+  - Next scope: `OKLIB_ENABLE_TLS`, TLS options, HTTPS client/server transport, and TLS tests/examples gated behind OpenSSL.
 
 ## Completed Phases
 
@@ -66,10 +66,16 @@
   - Server and client now parse `Connection` as a comma-separated token list.
   - Commit: `c744b4c`.
   - Push: `origin/codex/http11-compliance`.
+- Phase B: `HttpClient` private in-process cache.
+  - Added opt-in `HttpClientCache` with LRU entry/body limits.
+  - Added `HttpClientOptions::cache` and `HttpClientResponseSource` to mark network/cache/revalidated responses.
+  - Buffered GET/HEAD now supports fresh cache hits, stale ETag/Last-Modified revalidation, `304` body reuse, Vary matching, `no-store`, and body-size exclusion.
+  - Added `oklib.http.client_cache` integration coverage.
+  - Commit: `798565e`.
+  - Push: pending.
 
 ## Incomplete Phases
 
-- Phase B: `HttpClient` private cache integration.
 - Phase C: optional OpenSSL TLS client/server.
 - Phase D: complete HTTP examples and benchmark.
 
@@ -100,6 +106,8 @@
 - 2026-06-25: `ctest --test-dir build --output-on-failure` passed, 11/11 tests after completing Phase 6.
 - 2026-06-25: `cmake --build build --parallel` passed after Phase A boundary hardening.
 - 2026-06-25: `ctest --test-dir build --output-on-failure` passed, 12/12 tests after Phase A boundary hardening.
+- 2026-06-25: `cmake --build build --parallel` passed after Phase B private cache.
+- 2026-06-25: `ctest --test-dir build --output-on-failure` passed, 13/13 tests after Phase B private cache.
 
 ## Latest Commit / Push
 
@@ -115,8 +123,9 @@
 - Phase 5 semantic helpers commit: `a89114f`.
 - Phase 6 cache helpers commit: `3e5cdc2`.
 - Phase A RFC boundary hardening commit: `c744b4c`.
+- Phase B HttpClient private cache commit: `798565e`.
 - Push: `origin/codex/http11-compliance`.
 
 ## Next Step
 
-- Start Phase B with failing tests for opt-in `HttpClientCache`, fresh cache hits, stale ETag revalidation, Vary mismatch, and cache limits.
+- Start Phase C with optional `OKLIB_ENABLE_TLS`, OpenSSL discovery/linking, TLS client/server options, and gated HTTPS tests.
