@@ -160,7 +160,7 @@ int main() {
   require(oklib::Logger::flush_interval() == std::chrono::milliseconds(50),
           "flush interval is configurable");
   std::atomic<bool> keep_logging{true};
-  std::jthread noisy_logger([&] {
+  std::thread noisy_logger([&] {
     while (keep_logging.load(std::memory_order_relaxed)) {
       OKLIB_LOG_INFO << "periodic-noise";
       std::this_thread::sleep_for(std::chrono::milliseconds(10));
@@ -258,14 +258,17 @@ int main() {
           "truncate mode does not keep backup files");
 
   oklib::CountDownLatch latch(2);
-  std::jthread t1([&] { latch.count_down(); });
-  std::jthread t2([&] { latch.count_down(); });
+  std::thread t1([&] { latch.count_down(); });
+  std::thread t2([&] { latch.count_down(); });
   latch.wait();
+  t1.join();
+  t2.join();
   require(latch.count() == 0, "latch reaches zero");
 
   oklib::BlockingQueue<int> queue;
-  std::jthread producer([&] { queue.put(7); });
+  std::thread producer([&] { queue.put(7); });
   require(queue.take() == 7, "blocking queue transfers value");
+  producer.join();
 
   oklib::ThreadPool pool("base-test");
   std::atomic<int> ran{0};

@@ -114,7 +114,7 @@ std::string run_router_case(const std::string& request) {
   server.start();
 
   std::string response;
-  std::jthread client([&] { response = request_once(request, server.listen_address(), &loop); });
+  std::thread client([&] { response = request_once(request, server.listen_address(), &loop); });
   loop.run_after(std::chrono::seconds(2), [&] { loop.quit(); });
   loop.loop();
   client.join();

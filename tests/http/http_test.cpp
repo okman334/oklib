@@ -133,7 +133,7 @@ std::string run_http_case(const std::string& request,
   server.start();
 
   std::string response;
-  std::jthread client([&] { response = request_once(request, server.listen_address(), &loop, done); });
+  std::thread client([&] { response = request_once(request, server.listen_address(), &loop, done); });
   loop.run_after(std::chrono::seconds(2), [&] { loop.quit(); });
   loop.loop();
   client.join();
@@ -152,7 +152,7 @@ std::string run_options_star_case() {
   server.start();
 
   std::string response;
-  std::jthread client([&] {
+  std::thread client([&] {
     response = request_once(
         "OPTIONS * HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n",
         server.listen_address(),
@@ -200,7 +200,7 @@ std::string run_protocol_exposure_case(const std::string& request) {
   server.start();
 
   std::string response;
-  std::jthread client([&] { response = request_once(request, server.listen_address(), &loop); });
+  std::thread client([&] { response = request_once(request, server.listen_address(), &loop); });
   loop.run_after(std::chrono::seconds(2), [&] { loop.quit(); });
   loop.loop();
   client.join();
@@ -235,7 +235,7 @@ std::string run_async_http_case(const std::string& request,
   server.start();
 
   std::string response;
-  std::jthread client([&] { response = request_once(request, server.listen_address(), &loop, done); });
+  std::thread client([&] { response = request_once(request, server.listen_address(), &loop, done); });
   loop.run_after(std::chrono::seconds(2), [&] { loop.quit(); });
   loop.loop();
   client.join();
@@ -275,7 +275,7 @@ std::string run_request_streaming_http_case() {
   server.start();
 
   std::string response;
-  std::jthread client([&] {
+  std::thread client([&] {
     response = request_in_parts(
         "POST /stream-body?fixed HTTP/1.1\r\nHost: localhost\r\nContent-Length: 11\r\nConnection: close\r\n\r\nhello ",
         "world",
@@ -323,7 +323,7 @@ std::string run_chunked_request_streaming_http_case() {
   server.start();
 
   std::string response;
-  std::jthread client([&] {
+  std::thread client([&] {
     response = request_in_parts(
         "POST /stream-body?chunked HTTP/1.1\r\nHost: localhost\r\nTransfer-Encoding: chunked\r\n"
         "Connection: close\r\n\r\n5\r\nhello\r\n",
@@ -367,7 +367,7 @@ std::string run_streaming_http_case(const std::string& request) {
   server.start();
 
   std::string response;
-  std::jthread client([&] {
+  std::thread client([&] {
     response = request_once(request, server.listen_address(), &loop, [](const std::string& value) {
       return value.find("0\r\n\r\n") != std::string::npos;
     });
@@ -403,7 +403,7 @@ std::string run_http_high_watermark_case(std::atomic<bool>* high_watermark_seen,
   server.start();
 
   std::string response;
-  std::jthread client([&] {
+  std::thread client([&] {
     int fd = ::socket(AF_INET, SOCK_STREAM, 0);
     require(fd >= 0, "high watermark socket succeeds");
     int receive_buffer = 1024;

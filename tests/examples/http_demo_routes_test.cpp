@@ -86,7 +86,7 @@ void test_upload_file_route_saves_raw_jpeg_body() {
       jpg_body;
 
   std::string response;
-  std::jthread client([&] {
+  std::thread client([&] {
     response = request_once(request, server.listen_address(), &loop);
   });
   loop.run_after(std::chrono::seconds(2), [&] { loop.quit(); });

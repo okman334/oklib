@@ -35,7 +35,7 @@ int main() {
   {
     std::promise<oklib::net::EventLoop*> ready;
     std::atomic<int> ran{0};
-    std::jthread loop_thread([&] {
+    std::thread loop_thread([&] {
       oklib::net::EventLoop loop;
       ready.set_value(&loop);
       loop.loop();
@@ -66,7 +66,7 @@ int main() {
 
     std::promise<void> ready;
     std::atomic<int> reads{0};
-    std::jthread loop_thread([&] {
+    std::thread loop_thread([&] {
       oklib::net::EventLoop loop;
       oklib::net::Channel channel(&loop, fds[1]);
       channel.set_read_callback([&](oklib::Timestamp) {
