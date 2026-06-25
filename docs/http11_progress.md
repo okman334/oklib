@@ -65,7 +65,7 @@
   - Server response serialization suppresses bodies for no-body status codes.
   - Server and client now parse `Connection` as a comma-separated token list.
   - Commit: `c744b4c`.
-  - Push: pending.
+  - Push: `origin/codex/http11-compliance`.
 
 ## Incomplete Phases
 
