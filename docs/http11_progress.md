@@ -2,8 +2,8 @@
 
 ## Current Phase
 
-- Phase 5: RFC 9110 semantic helpers.
-  - Next scope: standard method/status code tables, `OPTIONS *`, `Allow`, Range/Content-Range parser, ETag/Last-Modified/If-* helpers, and exposing CONNECT/Upgrade/TRACE semantics to business code.
+- Phase 6: RFC 9111 cache-related helpers.
+  - Next scope: Cache-Control, Expires, Age, Vary, ETag freshness/validation helpers, without building a shared proxy cache.
 
 ## Completed Phases
 
@@ -42,10 +42,18 @@
   - Added `Expect: 100-continue` flow that sends headers first, waits for interim `100 Continue`, hides interim 100 responses from user callbacks, then sends the request body.
   - Commits: `bb1ff92`, `6d47852`.
   - Push: `origin/codex/http11-compliance`.
+- Phase 5: RFC 9110 semantic helpers.
+  - Added standard method metadata helpers and status reason phrase/status classification helpers.
+  - Added `HttpResponse::set_status_code(int)` for unknown or extension status codes while preserving custom reason phrases.
+  - Added Range and Content-Range parsing helpers.
+  - Added Entity-Tag, If-Match, If-None-Match, IMF-fixdate, If-Modified-Since, and If-Unmodified-Since helpers.
+  - Added `HttpServer::set_allowed_methods(...)` and automatic `OPTIONS *` handling with `Allow`.
+  - Verified CONNECT, TRACE, and Upgrade requests/headers are exposed to application callbacks by default.
+  - Commit: `a89114f`.
+  - Push: pending.
 
 ## Incomplete Phases
 
-- Phase 5: RFC 9110 semantic helpers.
 - Phase 6: RFC 9111 cache-related helpers.
 
 ## Current Blockers
@@ -69,6 +77,8 @@
 - 2026-06-25: `ctest --test-dir build --output-on-failure` passed, 9/9 tests after buffered HttpClient implementation.
 - 2026-06-25: `oklib.http.client` passed after streaming response callbacks and `Expect: 100-continue`.
 - 2026-06-25: `ctest --test-dir build --output-on-failure` passed, 9/9 tests after completing Phase 4.
+- 2026-06-25: `cmake --build build --parallel` passed after completing Phase 5.
+- 2026-06-25: `ctest --test-dir build --output-on-failure` passed, 10/10 tests after completing Phase 5.
 
 ## Latest Commit / Push
 
@@ -81,8 +91,9 @@
 - Phase 3 completion commit: `add304b`.
 - Phase 4 buffered HttpClient commit: `bb1ff92`.
 - Phase 4 completion commit: `6d47852`.
+- Phase 5 semantic helpers commit: `a89114f`.
 - Push: `origin/codex/http11-compliance`.
 
 ## Next Step
 
-- Start Phase 5 with failing tests for standard method/status helpers and `OPTIONS *`/`Allow` behavior.
+- Start Phase 6 with failing tests for Cache-Control, Expires, Age, Vary, and freshness/validation helpers.
