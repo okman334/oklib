@@ -6,6 +6,7 @@
 #include <utility>
 
 #include "oklib/http/http_context.h"
+#include "oklib/http/http_router.h"
 #include "oklib/http/http_request.h"
 #include "oklib/http/http_response.h"
 #include "oklib/net/buffer.h"
@@ -105,6 +106,10 @@ HttpServer::HttpServer(oklib::net::EventLoop* loop, const oklib::net::InetAddres
 
 void HttpServer::start() {
   server_.start();
+}
+
+void HttpServer::set_router(const HttpRouter& router) {
+  set_streaming_http_callback(router.streaming_callback());
 }
 
 void HttpServer::on_connection(const oklib::net::TcpConnectionPtr& connection) {

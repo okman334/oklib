@@ -16,6 +16,7 @@ namespace oklib::http {
 
 class HttpRequest;
 class HttpResponse;
+class HttpRouter;
 
 class HttpServer : private oklib::Noncopyable {
  public:
@@ -35,6 +36,7 @@ class HttpServer : private oklib::Noncopyable {
   void set_streaming_http_callback(StreamingHttpCallback callback) {
     streaming_http_callback_ = std::move(callback);
   }
+  void set_router(const HttpRouter& router);
   void set_tls_options(TlsServerOptions options) { tls_options_ = std::move(options); }
   void set_allowed_methods(std::vector<std::string> methods) {
     allowed_methods_ = std::move(methods);

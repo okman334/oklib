@@ -45,6 +45,36 @@ server.set_async_http_callback(
     });
 ```
 
+For method-aware routing, use `HttpRouter`. It dispatches by `method + path`,
+returns `404` for missing paths, and returns `405 Method Not Allowed` with an
+`Allow` header when the path exists but the method does not match:
+
+```cpp
+oklib::http::HttpRouter router;
+
+router.get("/", [](const oklib::http::HttpRequest&,
+                   oklib::http::HttpResponseWriter writer) {
+  auto response = writer.make_response();
+  response.set_status_code(200);
+  response.set_body("hello");
+  writer.send(std::move(response));
+});
+
+router.post_streaming("/upload",
+                      [](oklib::http::HttpRequest,
+                         oklib::http::HttpRequestBodyStream body,
+                         oklib::http::HttpResponseWriter writer) {
+                        body.set_complete_callback([writer] {
+                          auto response = writer.make_response();
+                          response.set_status_code(200);
+                          response.set_body("uploaded");
+                          writer.send(std::move(response));
+                        });
+                      });
+
+server.set_router(router);
+```
+
 For large responses, stream HTTP/1.1 chunks instead of building one large body:
 
 ```cpp
