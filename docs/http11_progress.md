@@ -2,8 +2,8 @@
 
 ## Current Phase
 
-- Phase 6: RFC 9111 cache-related helpers.
-  - Next scope: Cache-Control, Expires, Age, Vary, ETag freshness/validation helpers, without building a shared proxy cache.
+- Planned HTTP/1.1 phases are complete.
+  - Next optional scope: stricter RFC edge-case coverage, private client cache integration, or higher-level examples using the new HTTP client/server APIs.
 
 ## Completed Phases
 
@@ -51,10 +51,18 @@
   - Verified CONNECT, TRACE, and Upgrade requests/headers are exposed to application callbacks by default.
   - Commit: `a89114f`.
   - Push: `origin/codex/http11-compliance`.
+- Phase 6: RFC 9111 cache-related helpers.
+  - Added `HttpCache` helper APIs for Cache-Control directive parsing, quoted values, and delta-seconds.
+  - Added Age and Expires parsing helpers.
+  - Added freshness helpers for current age, explicit freshness lifetime, private/shared cache behavior, `no-cache`, `no-store`, and `private`.
+  - Added Vary parsing and request-header matching helpers.
+  - Added validator header generation from cached ETag and Last-Modified metadata.
+  - Commit: `3e5cdc2`.
+  - Push: pending.
 
 ## Incomplete Phases
 
-- Phase 6: RFC 9111 cache-related helpers.
+- None for the original HTTP/1.1 phased plan.
 
 ## Current Blockers
 
@@ -79,6 +87,8 @@
 - 2026-06-25: `ctest --test-dir build --output-on-failure` passed, 9/9 tests after completing Phase 4.
 - 2026-06-25: `cmake --build build --parallel` passed after completing Phase 5.
 - 2026-06-25: `ctest --test-dir build --output-on-failure` passed, 10/10 tests after completing Phase 5.
+- 2026-06-25: `cmake --build build --parallel` passed after completing Phase 6.
+- 2026-06-25: `ctest --test-dir build --output-on-failure` passed, 11/11 tests after completing Phase 6.
 
 ## Latest Commit / Push
 
@@ -92,8 +102,9 @@
 - Phase 4 buffered HttpClient commit: `bb1ff92`.
 - Phase 4 completion commit: `6d47852`.
 - Phase 5 semantic helpers commit: `a89114f`.
+- Phase 6 cache helpers commit: `3e5cdc2`.
 - Push: `origin/codex/http11-compliance`.
 
 ## Next Step
 
-- Start Phase 6 with failing tests for Cache-Control, Expires, Age, Vary, and freshness/validation helpers.
+- Decide the next roadmap item: stricter RFC conformance edge cases, private cache integration in `HttpClient`, TLS support, or production examples/benchmarks.
