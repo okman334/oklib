@@ -58,7 +58,7 @@
   - Added Vary parsing and request-header matching helpers.
   - Added validator header generation from cached ETag and Last-Modified metadata.
   - Commit: `3e5cdc2`.
-  - Push: pending.
+  - Push: `origin/codex/http11-compliance`.
 
 ## Incomplete Phases
 
