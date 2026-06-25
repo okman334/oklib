@@ -2,9 +2,8 @@
 
 ## Current Phase
 
-- Phase 3: server streaming and backpressure.
-  - Completed in this phase: async buffered response callback, `HttpResponseWriter`, chunked response streaming, Content-Length request body streaming callbacks, and explicit `501 Not Implemented` handling for chunked request streaming while it is unsupported.
-  - Remaining in this phase: chunked request body streaming and explicit high-watermark/backpressure HTTP tests.
+- Phase 4: HTTP client.
+  - Next scope: nonblocking client request serialization, response parser integration, keep-alive reuse, close/reconnect behavior, buffered callbacks, and streaming response callbacks.
 
 ## Completed Phases
 
@@ -29,10 +28,17 @@
   - Added integration coverage in `oklib.http`.
   - Commit: `eb42d8c`.
   - Push: `origin/codex/http11-compliance`.
+- Phase 3: server streaming and backpressure.
+  - Added async buffered response callback and `HttpResponseWriter`.
+  - Added chunked response streaming.
+  - Added Content-Length request body streaming callbacks.
+  - Added chunked request body streaming callbacks with trailer consumption.
+  - Exposed HTTP/TCP high-watermark callback wiring and added slow-client backpressure coverage.
+  - Commits: `69c37d6`, `710a4cb`, `d8b6cb5`, `add304b`.
+  - Push: `origin/codex/http11-compliance`.
 
 ## Incomplete Phases
 
-- Phase 3: server streaming and backpressure.
 - Phase 4: HTTP client.
 - Phase 5: RFC 9110 semantic helpers.
 - Phase 6: RFC 9111 cache-related helpers.
@@ -52,6 +58,8 @@
 - 2026-06-25: `oklib.http` Content-Length request body streaming integration test passed locally.
 - 2026-06-25: `cmake --build build --parallel` passed after Content-Length request streaming.
 - 2026-06-25: `ctest --test-dir build --output-on-failure` passed, 8/8 tests after Content-Length request streaming and chunked streaming rejection guard.
+- 2026-06-25: `cmake --build build --parallel` passed after completing Phase 3.
+- 2026-06-25: `ctest --test-dir build --output-on-failure` passed, 8/8 tests after completing Phase 3.
 
 ## Latest Commit / Push
 
@@ -61,8 +69,9 @@
 - Phase 3 async response commit: `69c37d6`.
 - Phase 3 chunked response streaming commit: `710a4cb`.
 - Phase 3 request body streaming commit: `d8b6cb5`.
+- Phase 3 completion commit: `add304b`.
 - Push: `origin/codex/http11-compliance`.
 
 ## Next Step
 
-- Continue Phase 3 with failing tests for chunked request body streaming or explicit high-watermark/backpressure behavior.
+- Start Phase 4 with failing tests for the HTTP client buffered request/response path.
