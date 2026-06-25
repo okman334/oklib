@@ -76,7 +76,8 @@
 
 ## Latest Commit / Push
 
-- Pending.
+- Implementation commit: `59109c7`.
+- Push: `origin/codex/websocket-standard`.
 
 ## Next Step
 
