@@ -7,6 +7,7 @@ project(oklib
 
 option(OKLIB_BUILD_TESTS "Build oklib tests" ON)
 option(OKLIB_BUILD_EXAMPLES "Build oklib examples" ON)
+option(OKLIB_ENABLE_TLS "Enable optional OpenSSL TLS support" OFF)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -17,6 +18,9 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
 endif()
 
 find_package(Threads REQUIRED)
+if(OKLIB_ENABLE_TLS)
+  find_package(OpenSSL REQUIRED)
+endif()
 
 add_library(oklib_base STATIC
   src/base/countdown_latch.cpp
@@ -68,13 +72,20 @@ add_library(oklib_http STATIC
   src/http/http_response_writer.cpp
   src/http/http_semantics.cpp
   src/http/http_server.cpp)
+if(OKLIB_ENABLE_TLS)
+  target_sources(oklib_http PRIVATE src/http/tls_engine.cpp)
+endif()
 add_library(oklib::http ALIAS oklib_http)
 target_link_libraries(oklib_http PUBLIC oklib::net)
+if(OKLIB_ENABLE_TLS)
+  target_link_libraries(oklib_http PUBLIC OpenSSL::SSL OpenSSL::Crypto)
+endif()
 target_include_directories(oklib_http
   PUBLIC
     $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
     $<INSTALL_INTERFACE:include>)
 target_compile_features(oklib_http PUBLIC cxx_std_20)
+target_compile_definitions(oklib_http PUBLIC OKLIB_ENABLE_TLS=$<BOOL:${OKLIB_ENABLE_TLS}>)
 
 if(OKLIB_BUILD_TESTS)
   enable_testing()

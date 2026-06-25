@@ -57,6 +57,21 @@ void TcpConnection::send(Buffer* buffer) {
   send(buffer->retrieve_all_as_string());
 }
 
+void TcpConnection::send_raw(std::string_view message) {
+  if (!connected()) {
+    return;
+  }
+  std::string owned(message);
+  if (loop_->is_in_loop_thread()) {
+    send_raw_in_loop(std::move(owned));
+  } else {
+    auto self = shared_from_this();
+    loop_->queue_in_loop([self, message = std::move(owned)]() mutable {
+      self->send_raw_in_loop(std::move(message));
+    });
+  }
+}
+
 void TcpConnection::shutdown() {
   State expected = State::connected;
   if (state_.compare_exchange_strong(expected, State::disconnecting)) {
@@ -160,10 +175,24 @@ void TcpConnection::handle_error() {
 }
 
 void TcpConnection::send_in_loop(std::string message) {
-  send_in_loop(message.data(), message.size());
+  if (send_filter_) {
+    message = send_filter_(message);
+  }
+  if (!message.empty()) {
+    send_raw_in_loop(message.data(), message.size());
+  }
 }
 
 void TcpConnection::send_in_loop(const void* data, std::size_t len) {
+  std::string message(static_cast<const char*>(data), len);
+  send_in_loop(std::move(message));
+}
+
+void TcpConnection::send_raw_in_loop(std::string message) {
+  send_raw_in_loop(message.data(), message.size());
+}
+
+void TcpConnection::send_raw_in_loop(const void* data, std::size_t len) {
   loop_->assert_in_loop_thread();
   if (disconnected()) {
     return;

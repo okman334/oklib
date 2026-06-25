@@ -9,6 +9,7 @@
 #include "oklib/base/noncopyable.h"
 #include "oklib/http/http_request_body_stream.h"
 #include "oklib/http/http_response_writer.h"
+#include "oklib/http/tls_options.h"
 #include "oklib/net/tcp_server.h"
 
 namespace oklib::http {
@@ -34,6 +35,7 @@ class HttpServer : private oklib::Noncopyable {
   void set_streaming_http_callback(StreamingHttpCallback callback) {
     streaming_http_callback_ = std::move(callback);
   }
+  void set_tls_options(TlsServerOptions options) { tls_options_ = std::move(options); }
   void set_allowed_methods(std::vector<std::string> methods) {
     allowed_methods_ = std::move(methods);
   }
@@ -50,6 +52,10 @@ class HttpServer : private oklib::Noncopyable {
   void on_connection(const oklib::net::TcpConnectionPtr& connection);
   void on_message(const oklib::net::TcpConnectionPtr& connection, oklib::net::Buffer* buffer,
                   oklib::Timestamp receive_time);
+  void on_plain_message(const oklib::net::TcpConnectionPtr& connection,
+                        oklib::net::Buffer* buffer,
+                        oklib::Timestamp receive_time,
+                        HttpContext* context);
   bool on_request(const oklib::net::TcpConnectionPtr& connection, const HttpRequest& request);
   bool on_options_star(const oklib::net::TcpConnectionPtr& connection, const HttpRequest& request);
   bool on_async_request(const oklib::net::TcpConnectionPtr& connection,
@@ -64,6 +70,7 @@ class HttpServer : private oklib::Noncopyable {
   HttpCallback http_callback_;
   AsyncHttpCallback async_http_callback_;
   StreamingHttpCallback streaming_http_callback_;
+  TlsServerOptions tls_options_;
   std::vector<std::string> allowed_methods_{"GET", "HEAD", "POST", "PUT", "DELETE",
                                             "OPTIONS", "TRACE", "CONNECT", "PATCH"};
 };

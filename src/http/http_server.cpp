@@ -2,6 +2,7 @@
 
 #include <any>
 #include <cctype>
+#include <memory>
 #include <utility>
 
 #include "oklib/http/http_context.h"
@@ -9,9 +10,20 @@
 #include "oklib/http/http_response.h"
 #include "oklib/net/buffer.h"
 #include "oklib/net/tcp_connection.h"
+#if OKLIB_ENABLE_TLS
+#include "tls_engine.h"
+#endif
 
 namespace oklib::http {
 namespace {
+
+struct ServerConnectionContext {
+  HttpContext http;
+#if OKLIB_ENABLE_TLS
+  std::shared_ptr<TlsEngine> tls;
+#endif
+  bool tls_ready{false};
+};
 
 bool equals_ignore_case(std::string_view lhs, std::string_view rhs) {
   if (lhs.size() != rhs.size()) {
@@ -97,21 +109,101 @@ void HttpServer::start() {
 
 void HttpServer::on_connection(const oklib::net::TcpConnectionPtr& connection) {
   if (connection->connected()) {
-    HttpContext context;
-    context.set_peer_address(connection->peer_address().to_ip(), connection->peer_address().port());
+    ServerConnectionContext context;
+    context.http.set_peer_address(connection->peer_address().to_ip(), connection->peer_address().port());
+#if OKLIB_ENABLE_TLS
+    if (tls_options_.enabled) {
+      std::string error;
+      auto tls = TlsEngine::create_server(tls_options_, &error);
+      if (!tls) {
+        connection->force_close();
+        return;
+      }
+      context.tls = std::shared_ptr<TlsEngine>(std::move(tls));
+    }
+#else
+    if (tls_options_.enabled) {
+      connection->force_close();
+      return;
+    }
+#endif
     connection->set_context(std::move(context));
+#if OKLIB_ENABLE_TLS
+    if (tls_options_.enabled) {
+      std::weak_ptr<oklib::net::TcpConnection> weak = connection;
+      connection->set_send_filter([weak](std::string_view plain) {
+        auto connection = weak.lock();
+        if (!connection) {
+          return std::string{};
+        }
+        auto* context = std::any_cast<ServerConnectionContext>(&connection->mutable_context());
+        if (context == nullptr || !context->tls) {
+          return std::string{};
+        }
+        std::string encrypted;
+        std::string error;
+        if (!context->tls->encrypt(plain, &encrypted, &error)) {
+          connection->force_close();
+          return std::string{};
+        }
+        return encrypted;
+      });
+    }
+#endif
   }
 }
 
 void HttpServer::on_message(const oklib::net::TcpConnectionPtr& connection,
                             oklib::net::Buffer* buffer,
                             oklib::Timestamp receive_time) {
-  auto* context = std::any_cast<HttpContext>(&connection->mutable_context());
+  auto* context = std::any_cast<ServerConnectionContext>(&connection->mutable_context());
   if (context == nullptr) {
     send_bad_request_and_close(connection);
     return;
   }
 
+#if OKLIB_ENABLE_TLS
+  if (tls_options_.enabled) {
+    if (!context->tls) {
+      connection->force_close();
+      return;
+    }
+
+    std::string error;
+    const auto encrypted_input = buffer->retrieve_all_as_string();
+    if (!context->tls->receive_encrypted(encrypted_input, &error)) {
+      connection->force_close();
+      return;
+    }
+
+    std::string encrypted_output;
+    std::string plain_output;
+    if (!context->tls->read_decrypted(&plain_output, &encrypted_output, &error)) {
+      connection->force_close();
+      return;
+    }
+    if (!encrypted_output.empty()) {
+      connection->send_raw(encrypted_output);
+    }
+    context->tls_ready = context->tls->handshake_complete();
+    if (!context->tls_ready || plain_output.empty()) {
+      return;
+    }
+
+    oklib::net::Buffer plain_buffer;
+    plain_buffer.append(plain_output);
+    on_plain_message(connection, &plain_buffer, receive_time, &context->http);
+    return;
+  }
+#endif
+
+  on_plain_message(connection, buffer, receive_time, &context->http);
+}
+
+void HttpServer::on_plain_message(const oklib::net::TcpConnectionPtr& connection,
+                                  oklib::net::Buffer* buffer,
+                                  oklib::Timestamp receive_time,
+                                  HttpContext* context) {
   while (connection->connected()) {
     if (context->streaming_body_active()) {
       const auto status = context->process_streaming_body(buffer);
