@@ -2,8 +2,8 @@
 
 ## Current Phase
 
-- Next Phase C: optional OpenSSL TLS client/server.
-  - Next scope: `OKLIB_ENABLE_TLS`, TLS options, HTTPS client/server transport, and TLS tests/examples gated behind OpenSSL.
+- Next Phase D: complete HTTP examples and benchmark.
+  - Next scope: full HTTP server/client examples, HTTPS examples gated by `OKLIB_ENABLE_TLS`, and local keep-alive benchmark.
 
 ## Completed Phases
 
@@ -73,10 +73,17 @@
   - Added `oklib.http.client_cache` integration coverage.
   - Commit: `798565e`.
   - Push: `origin/codex/http11-compliance`.
+- Phase C: optional OpenSSL TLS client/server.
+  - Added `OKLIB_ENABLE_TLS` CMake option with optional `find_package(OpenSSL REQUIRED)` and OpenSSL link targets.
+  - Added public `TlsClientOptions` and `TlsServerOptions`; `HttpClientOptions` and `HttpServer` now expose optional TLS configuration.
+  - Added OpenSSL memory-BIO TLS engine and TCP send filtering/raw send support so existing HTTP callbacks and response writers keep the same API.
+  - Added gated `oklib.http.tls` tests for HTTPS client/server round trip and self-signed certificate verification failure.
+  - Stabilized the client cache body-limit test by separating independent EventLoop fixtures.
+  - Commits: `b96c044`, `7a7f951`.
+  - Push: pending.
 
 ## Incomplete Phases
 
-- Phase C: optional OpenSSL TLS client/server.
 - Phase D: complete HTTP examples and benchmark.
 
 ## Current Blockers
@@ -108,6 +115,11 @@
 - 2026-06-25: `ctest --test-dir build --output-on-failure` passed, 12/12 tests after Phase A boundary hardening.
 - 2026-06-25: `cmake --build build --parallel` passed after Phase B private cache.
 - 2026-06-25: `ctest --test-dir build --output-on-failure` passed, 13/13 tests after Phase B private cache.
+- 2026-06-25: `cmake --build build --parallel` passed after Phase C TLS changes.
+- 2026-06-25: `ctest --test-dir build --output-on-failure` passed, 13/13 tests after Phase C TLS changes.
+- 2026-06-25: `cmake -S . -B build-tls -DOKLIB_ENABLE_TLS=ON -DCMAKE_BUILD_TYPE=Debug` passed.
+- 2026-06-25: `cmake --build build-tls --parallel` passed.
+- 2026-06-25: `ctest --test-dir build-tls --output-on-failure` passed, 14/14 tests after Phase C TLS changes.
 
 ## Latest Commit / Push
 
@@ -124,8 +136,10 @@
 - Phase 6 cache helpers commit: `3e5cdc2`.
 - Phase A RFC boundary hardening commit: `c744b4c`.
 - Phase B HttpClient private cache commit: `798565e`.
+- Phase B cache test stabilization commit: `b96c044`.
+- Phase C optional TLS commit: `7a7f951`.
 - Push: `origin/codex/http11-compliance`.
 
 ## Next Step
 
-- Start Phase C with optional `OKLIB_ENABLE_TLS`, OpenSSL discovery/linking, TLS client/server options, and gated HTTPS tests.
+- Start Phase D with full HTTP server/client examples, HTTPS examples gated by `OKLIB_ENABLE_TLS`, and a local keep-alive benchmark.
