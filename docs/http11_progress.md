@@ -2,9 +2,8 @@
 
 ## Current Phase
 
-- Phase 4: HTTP client.
-  - Completed in this phase: nonblocking buffered `HttpClient`, request serialization, response parser integration, keep-alive reuse, server-close reconnect for later requests, queued-before-connect request coalescing, optional TCP retry wiring, and chunked response decoding.
-  - Remaining in this phase: streaming response callbacks and `Expect: 100-continue`.
+- Phase 5: RFC 9110 semantic helpers.
+  - Next scope: standard method/status code tables, `OPTIONS *`, `Allow`, Range/Content-Range parser, ETag/Last-Modified/If-* helpers, and exposing CONNECT/Upgrade/TRACE semantics to business code.
 
 ## Completed Phases
 
@@ -37,10 +36,15 @@
   - Exposed HTTP/TCP high-watermark callback wiring and added slow-client backpressure coverage.
   - Commits: `69c37d6`, `710a4cb`, `d8b6cb5`, `add304b`.
   - Push: `origin/codex/http11-compliance`.
+- Phase 4: HTTP client.
+  - Added nonblocking buffered `HttpClient`, request serialization, response parser integration, keep-alive reuse, server-close reconnect for later requests, queued-before-connect request coalescing, optional TCP retry wiring, and chunked response decoding.
+  - Added streaming response callbacks for fixed-length and chunked responses.
+  - Added `Expect: 100-continue` flow that sends headers first, waits for interim `100 Continue`, hides interim 100 responses from user callbacks, then sends the request body.
+  - Commits: `bb1ff92`, `6d47852`.
+  - Push: `origin/codex/http11-compliance`.
 
 ## Incomplete Phases
 
-- Phase 4: HTTP client.
 - Phase 5: RFC 9110 semantic helpers.
 - Phase 6: RFC 9111 cache-related helpers.
 
@@ -63,6 +67,8 @@
 - 2026-06-25: `ctest --test-dir build --output-on-failure` passed, 8/8 tests after completing Phase 3.
 - 2026-06-25: `oklib.http.client` passed after buffered HttpClient implementation.
 - 2026-06-25: `ctest --test-dir build --output-on-failure` passed, 9/9 tests after buffered HttpClient implementation.
+- 2026-06-25: `oklib.http.client` passed after streaming response callbacks and `Expect: 100-continue`.
+- 2026-06-25: `ctest --test-dir build --output-on-failure` passed, 9/9 tests after completing Phase 4.
 
 ## Latest Commit / Push
 
@@ -74,8 +80,9 @@
 - Phase 3 request body streaming commit: `d8b6cb5`.
 - Phase 3 completion commit: `add304b`.
 - Phase 4 buffered HttpClient commit: `bb1ff92`.
+- Phase 4 completion commit: `6d47852`.
 - Push: `origin/codex/http11-compliance`.
 
 ## Next Step
 
-- Continue Phase 4 with failing tests for streaming response callbacks, then `Expect: 100-continue`.
+- Start Phase 5 with failing tests for standard method/status helpers and `OPTIONS *`/`Allow` behavior.
