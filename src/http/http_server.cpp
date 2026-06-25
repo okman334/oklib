@@ -26,6 +26,31 @@ bool equals_ignore_case(std::string_view lhs, std::string_view rhs) {
   return true;
 }
 
+std::string_view trim_ows(std::string_view value) {
+  while (!value.empty() && (value.front() == ' ' || value.front() == '\t')) {
+    value.remove_prefix(1);
+  }
+  while (!value.empty() && (value.back() == ' ' || value.back() == '\t')) {
+    value.remove_suffix(1);
+  }
+  return value;
+}
+
+bool header_has_token(std::string_view value, std::string_view token) {
+  while (!value.empty()) {
+    const auto comma = value.find(',');
+    const auto part = trim_ows(comma == std::string_view::npos ? value : value.substr(0, comma));
+    if (equals_ignore_case(part, token)) {
+      return true;
+    }
+    if (comma == std::string_view::npos) {
+      return false;
+    }
+    value.remove_prefix(comma + 1);
+  }
+  return false;
+}
+
 void default_http_callback(const HttpRequest&, HttpResponse* response) {
   response->set_status_code(HttpStatusCode::not_found);
   response->set_body("404 Not Found");
@@ -207,9 +232,9 @@ bool HttpServer::on_streaming_request(const oklib::net::TcpConnectionPtr& connec
 
 bool HttpServer::should_close(const HttpRequest& request) const {
   const std::string connection_header = request.header("Connection");
-  return equals_ignore_case(connection_header, "close") ||
+  return header_has_token(connection_header, "close") ||
          (request.version() == HttpVersion::http10 &&
-          !equals_ignore_case(connection_header, "Keep-Alive"));
+          !header_has_token(connection_header, "Keep-Alive"));
 }
 
 }  // namespace oklib::http

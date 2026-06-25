@@ -8,6 +8,7 @@
 #include <utility>
 #include <vector>
 
+#include "oklib/http/http_semantics.h"
 #include "oklib/net/buffer.h"
 
 namespace oklib::http {
@@ -106,6 +107,73 @@ bool parse_hex_u64(std::string_view value, std::uint64_t* output) {
     return false;
   }
   *output = parsed;
+  return true;
+}
+
+bool is_token(std::string_view value) {
+  if (value.empty()) {
+    return false;
+  }
+  return std::all_of(value.begin(), value.end(), is_token_char);
+}
+
+bool is_quoted_string(std::string_view value) {
+  if (value.size() < 2 || value.front() != '"' || value.back() != '"') {
+    return false;
+  }
+  value.remove_prefix(1);
+  value.remove_suffix(1);
+
+  bool escaped = false;
+  for (const char c : value) {
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (c == '\\') {
+      escaped = true;
+      continue;
+    }
+    if (c == '"') {
+      return false;
+    }
+  }
+  return !escaped;
+}
+
+bool valid_chunk_extension_value(std::string_view value) {
+  value = trim_ows(value);
+  return is_token(value) || is_quoted_string(value);
+}
+
+bool valid_chunk_extensions(std::string_view value) {
+  while (!value.empty()) {
+    if (value.front() != ';') {
+      return false;
+    }
+    value.remove_prefix(1);
+
+    const auto next = value.find(';');
+    const auto extension = trim_ows(next == std::string_view::npos ? value : value.substr(0, next));
+    if (extension.empty()) {
+      return false;
+    }
+
+    const auto equals = extension.find('=');
+    const auto name = trim_ows(equals == std::string_view::npos ? extension : extension.substr(0, equals));
+    if (!is_token(name)) {
+      return false;
+    }
+    if (equals != std::string_view::npos &&
+        !valid_chunk_extension_value(extension.substr(equals + 1))) {
+      return false;
+    }
+
+    if (next == std::string_view::npos) {
+      return true;
+    }
+    value.remove_prefix(next);
+  }
   return true;
 }
 
@@ -209,6 +277,11 @@ bool is_chunked_transfer(const HttpHeaders& headers, bool* present, bool* ok) {
     return false;
   }
   return true;
+}
+
+bool forbidden_trailer_field(std::string_view field) {
+  const auto lower = lowercase(field);
+  return lower == "content-length" || lower == "transfer-encoding" || lower == "host";
 }
 
 }  // namespace
@@ -578,6 +651,13 @@ bool HttpParser::finish_headers() {
     return set_error(HttpParseError::bad_message_framing);
   }
 
+  if (mode_ == HttpParserMode::response && !status_code_allows_body(response_.status_code)) {
+    if (content_length.has_value()) {
+      response_.content_length = *content_length;
+    }
+    return finish_message();
+  }
+
   if (mode_ == HttpParserMode::request && request_.version() == HttpVersion::http11 &&
       !request_.headers().contains("Host")) {
     return set_error(HttpParseError::bad_header);
@@ -640,6 +720,9 @@ bool HttpParser::parse_chunk_size(oklib::net::Buffer* buffer) {
   std::string_view line(buffer->peek(), static_cast<std::size_t>(crlf - buffer->peek()));
   const auto semicolon = line.find(';');
   const auto size_part = semicolon == std::string_view::npos ? line : line.substr(0, semicolon);
+  if (semicolon != std::string_view::npos && !valid_chunk_extensions(line.substr(semicolon))) {
+    return set_error(HttpParseError::bad_message_framing);
+  }
   std::uint64_t size = 0;
   if (!parse_hex_u64(size_part, &size)) {
     return set_error(HttpParseError::bad_message_framing);
@@ -699,7 +782,12 @@ bool HttpParser::parse_trailers(oklib::net::Buffer* buffer) {
 
     HttpHeaders* trailers =
         mode_ == HttpParserMode::request ? &request_.mutable_trailers() : &response_.trailers;
-    if (!parse_header_line(std::string_view(buffer->peek(), line_size), trailers)) {
+    const std::string_view line(buffer->peek(), line_size);
+    const auto colon = line.find(':');
+    if (colon != std::string_view::npos && forbidden_trailer_field(line.substr(0, colon))) {
+      return set_error(HttpParseError::bad_header);
+    }
+    if (!parse_header_line(line, trailers)) {
       return false;
     }
     buffer->retrieve_until(crlf + 2);

@@ -8,6 +8,7 @@
 #include <string_view>
 #include <utility>
 
+#include "oklib/http/http_semantics.h"
 #include "oklib/net/buffer.h"
 #include "oklib/net/event_loop.h"
 #include "oklib/net/tcp_connection.h"
@@ -69,8 +70,27 @@ bool equals_ignore_case(std::string_view lhs, std::string_view rhs) {
   return true;
 }
 
+bool header_has_token(std::string_view value, std::string_view token) {
+  while (!value.empty()) {
+    const auto comma = value.find(',');
+    const auto part = trim_ows(comma == std::string_view::npos ? value : value.substr(0, comma));
+    if (equals_ignore_case(part, token)) {
+      return true;
+    }
+    if (comma == std::string_view::npos) {
+      return false;
+    }
+    value.remove_prefix(comma + 1);
+  }
+  return false;
+}
+
 bool expects_continue(const HttpClientRequest& request) {
   return !request.body().empty() && equals_ignore_case(request.headers().get("Expect"), "100-continue");
+}
+
+bool expects_no_response_body(const HttpClientRequest& request) {
+  return equals_ignore_case(request.method(), "HEAD");
 }
 
 }  // namespace
@@ -273,8 +293,11 @@ void HttpClient::on_message(const oklib::net::TcpConnectionPtr&,
       continue;
     }
 
-    const auto status = streaming_response_callback_ ? parser_.parse_response_head(buffer)
-                                                     : parser_.parse_response(buffer);
+    const bool request_expects_no_body =
+        !in_flight_requests_.empty() && expects_no_response_body(in_flight_requests_.front());
+    const auto status = streaming_response_callback_ || request_expects_no_body
+                            ? parser_.parse_response_head(buffer)
+                            : parser_.parse_response(buffer);
     if (status == HttpParseStatus::incomplete) {
       return;
     }
@@ -298,18 +321,20 @@ void HttpClient::on_message(const oklib::net::TcpConnectionPtr&,
     if (streaming_response_callback_) {
       streaming_response_close_ = response_closes_connection(response);
       const auto content_length = response.content_length.value_or(0);
+      const bool response_has_body =
+          !request_expects_no_body && status_code_allows_body(response.status_code);
       response.body.clear();
       parser_.reset();
 
       response_stream_ = HttpClientResponseStream();
-      if (response.chunked) {
+      if (response_has_body && response.chunked) {
         streaming_body_mode_ = StreamingBodyMode::chunked;
         streaming_chunk_state_ = StreamingChunkState::size;
         streaming_body_remaining_ = 0;
         streaming_decoded_body_bytes_ = 0;
         streaming_trailer_bytes_ = 0;
         streaming_response_active_ = true;
-      } else if (content_length > 0) {
+      } else if (response_has_body && content_length > 0) {
         streaming_body_mode_ = StreamingBodyMode::fixed_length;
         streaming_body_remaining_ = content_length;
         streaming_response_active_ = true;
@@ -552,8 +577,8 @@ void HttpClient::handle_parse_error() {
 
 bool HttpClient::response_closes_connection(const HttpResponseMessage& response) const {
   const std::string connection = response.headers.get("Connection");
-  return equals_ignore_case(connection, "close") ||
-         (response.version == HttpVersion::http10 && !equals_ignore_case(connection, "Keep-Alive"));
+  return header_has_token(connection, "close") ||
+         (response.version == HttpVersion::http10 && !header_has_token(connection, "Keep-Alive"));
 }
 
 }  // namespace oklib::http
