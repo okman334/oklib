@@ -91,6 +91,22 @@ server.set_high_water_mark_callback(
     1024 * 1024);
 ```
 
+Use `HttpClient` for nonblocking outbound HTTP/1.1 calls from an `EventLoop`.
+It is built on `TcpClient`, so it uses the same epoll/kqueue reactor path rather
+than `select`:
+
+```cpp
+oklib::http::HttpClient client(&loop, address, "api.internal", "api-client");
+client.set_response_callback([](oklib::http::HttpResponseMessage response) {
+  OKLIB_LOG_INFO << "status=" << response.status_code
+                 << " body=" << response.body;
+});
+
+oklib::http::HttpClientRequest request("GET", "/v1/users");
+request.add_header("Accept", "application/json");
+client.send(std::move(request));
+```
+
 Run the TCP echo examples:
 
 ```sh
