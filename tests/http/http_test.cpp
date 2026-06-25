@@ -222,36 +222,55 @@ std::string run_request_streaming_http_case() {
   return response;
 }
 
-std::string run_chunked_request_streaming_rejection_case() {
+std::string run_chunked_request_streaming_http_case() {
   oklib::net::EventLoop loop;
   oklib::http::HttpServer server(&loop,
                                  oklib::net::InetAddress::loopback(0),
-                                 "http-chunked-request-stream-reject-test");
-  bool callback_invoked = false;
+                                 "http-chunked-request-stream-test");
   server.set_streaming_http_callback(
-      [&callback_invoked](oklib::http::HttpRequest,
-                          oklib::http::HttpRequestBodyStream,
-                          oklib::http::HttpResponseWriter) {
-        callback_invoked = true;
+      [](oklib::http::HttpRequest request,
+         oklib::http::HttpRequestBodyStream body,
+         oklib::http::HttpResponseWriter writer) {
+        require(request.path() == "/stream-body", "chunked streaming request path parsed");
+        require(request.query() == "chunked", "chunked streaming request query parsed");
+        require(request.body().empty(), "chunked streaming request body is not buffered");
+
+        auto chunks = std::make_shared<std::vector<std::string>>();
+        body.set_data_callback([chunks](std::string_view chunk) {
+          chunks->push_back(std::string(chunk));
+        });
+        body.set_complete_callback([chunks, writer] {
+          auto response = writer.make_response();
+          response.set_status_code(oklib::http::HttpStatusCode::ok);
+          response.add_header("X-Body-Chunks", std::to_string(chunks->size()));
+          response.set_content_type("text/plain");
+
+          std::string joined;
+          for (const auto& chunk : *chunks) {
+            joined += chunk;
+          }
+          response.set_body(std::move(joined));
+          require(writer.send(std::move(response)), "chunked streaming request response sent");
+        });
       });
   server.start();
 
   std::string response;
   std::jthread client([&] {
-    response = request_once(
-        "POST /stream-body HTTP/1.1\r\nHost: localhost\r\nTransfer-Encoding: chunked\r\n"
-        "Connection: close\r\n\r\n5\r\nhello\r\n0\r\n\r\n",
+    response = request_in_parts(
+        "POST /stream-body?chunked HTTP/1.1\r\nHost: localhost\r\nTransfer-Encoding: chunked\r\n"
+        "Connection: close\r\n\r\n5\r\nhello\r\n",
+        "6\r\n world\r\n1\r\n!\r\n0\r\n\r\n",
         server.listen_address(),
         &loop,
         [](const std::string& value) {
-          return value.find("501 Not Implemented") != std::string::npos;
+          return value.find("hello world!") != std::string::npos;
         });
   });
   loop.run_after(std::chrono::seconds(2), [&] { loop.quit(); });
   loop.loop();
   client.join();
 
-  require(!callback_invoked, "unsupported chunked streaming request does not invoke callback");
   return response;
 }
 
@@ -290,6 +309,71 @@ std::string run_streaming_http_case(const std::string& request) {
   loop.loop();
   client.join();
   workers.stop();
+  return response;
+}
+
+std::string run_http_high_watermark_case(std::atomic<bool>* high_watermark_seen,
+                                         std::atomic<std::size_t>* high_watermark_size) {
+  oklib::net::EventLoop loop;
+  oklib::http::HttpServer server(&loop,
+                                 oklib::net::InetAddress::loopback(0),
+                                 "http-high-watermark-test");
+  server.set_high_water_mark_callback(
+      [high_watermark_seen, high_watermark_size](const oklib::net::TcpConnectionPtr&, std::size_t size) {
+        high_watermark_size->store(size, std::memory_order_release);
+        high_watermark_seen->store(true, std::memory_order_release);
+      },
+      1024);
+  server.set_async_http_callback([](oklib::http::HttpRequest, oklib::http::HttpResponseWriter writer) {
+    auto response = writer.make_response();
+    response.set_status_code(oklib::http::HttpStatusCode::ok);
+    response.add_header("X-Large", "yes");
+    std::string body(2 * 1024 * 1024, 'x');
+    body += "END";
+    response.set_body(std::move(body));
+    require(writer.send(std::move(response)), "large response sent");
+  });
+  server.start();
+
+  std::string response;
+  std::jthread client([&] {
+    int fd = ::socket(AF_INET, SOCK_STREAM, 0);
+    require(fd >= 0, "high watermark socket succeeds");
+    int receive_buffer = 1024;
+    require(::setsockopt(fd,
+                         SOL_SOCKET,
+                         SO_RCVBUF,
+                         &receive_buffer,
+                         sizeof(receive_buffer)) == 0,
+            "small receive buffer set");
+    require(::connect(fd, server.listen_address().sockaddr_ptr(), server.listen_address().length()) == 0,
+            "high watermark connect succeeds");
+    const std::string request = "GET /large HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n";
+    require(::write(fd, request.data(), request.size()) == static_cast<ssize_t>(request.size()),
+            "high watermark request write succeeds");
+
+    for (int i = 0; i < 100 && !high_watermark_seen->load(std::memory_order_acquire); ++i) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+
+    char buffer[8192];
+    for (;;) {
+      const auto n = ::read(fd, buffer, sizeof(buffer));
+      if (n > 0) {
+        response.append(buffer, static_cast<std::size_t>(n));
+        if (response.find("END") != std::string::npos) {
+          break;
+        }
+      } else {
+        break;
+      }
+    }
+    ::close(fd);
+    loop.queue_in_loop([&loop] { loop.quit(); });
+  });
+  loop.run_after(std::chrono::seconds(5), [&] { loop.quit(); });
+  loop.loop();
+  client.join();
   return response;
 }
 
@@ -398,9 +482,27 @@ int main() {
   require(request_stream_response.find("hello world") != std::string::npos,
           "streaming request body chunks are delivered");
 
-  const auto chunked_request_stream_response = run_chunked_request_streaming_rejection_case();
-  require(chunked_request_stream_response.find("HTTP/1.1 501 Not Implemented") != std::string::npos,
-          "chunked request body streaming is explicitly unsupported");
+  const auto chunked_request_stream_response = run_chunked_request_streaming_http_case();
+  require(chunked_request_stream_response.find("HTTP/1.1 200 OK") != std::string::npos,
+          "chunked request body streaming returns 200");
+  require(chunked_request_stream_response.find("X-Body-Chunks: 3") != std::string::npos,
+          "chunked request body streaming preserves chunk callbacks");
+  require(chunked_request_stream_response.find("hello world!") != std::string::npos,
+          "chunked request body chunks are delivered");
+
+  std::atomic<bool> high_watermark_seen{false};
+  std::atomic<std::size_t> high_watermark_size{0};
+  const auto high_watermark_response =
+      run_http_high_watermark_case(&high_watermark_seen, &high_watermark_size);
+  require(high_watermark_seen.load(std::memory_order_acquire), "HTTP high watermark callback fires");
+  require(high_watermark_size.load(std::memory_order_acquire) >= 1024,
+          "HTTP high watermark reports buffered bytes");
+  require(high_watermark_response.find("HTTP/1.1 200 OK") != std::string::npos,
+          "large HTTP response returns 200");
+  require(high_watermark_response.find("X-Large: yes") != std::string::npos,
+          "large HTTP response keeps headers");
+  require(high_watermark_response.find("END") != std::string::npos,
+          "large HTTP response body is not dropped");
 
   return 0;
 }

@@ -69,6 +69,7 @@ void TcpServer::new_connection(int sockfd, const InetAddress& peer_address) {
   connection->set_connection_callback(connection_callback_);
   connection->set_message_callback(message_callback_);
   connection->set_write_complete_callback(write_complete_callback_);
+  connection->set_high_water_mark_callback(high_water_mark_callback_, high_water_mark_);
   connection->set_close_callback([this](const TcpConnectionPtr& conn) { remove_connection(conn); });
   io_loop->run_in_loop([connection] { connection->connect_established(); });
 }

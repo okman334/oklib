@@ -28,17 +28,38 @@ class HttpContext {
                                                         bool close_connection,
                                                         bool include_body);
   void start_streaming_body(HttpRequestBodyStream body_stream, std::uint64_t remaining_bytes);
+  void start_streaming_chunked_body(HttpRequestBodyStream body_stream);
   [[nodiscard]] bool streaming_body_active() const noexcept { return streaming_body_active_; }
   HttpParseStatus process_streaming_body(oklib::net::Buffer* buffer);
   void set_peer_address(std::string ip, uint16_t port);
   void reset();
 
  private:
+  enum class StreamingBodyMode {
+    none,
+    fixed_length,
+    chunked,
+  };
+
+  enum class StreamingChunkState {
+    size,
+    data,
+    data_crlf,
+    trailers,
+  };
+
+  HttpParseStatus process_fixed_streaming_body(oklib::net::Buffer* buffer);
+  HttpParseStatus process_chunked_streaming_body(oklib::net::Buffer* buffer);
+
   HttpParser parser_;
   HttpResponseWriter::StatePtr response_writer_state_;
   std::size_t next_response_sequence_{0};
   HttpRequestBodyStream body_stream_;
+  StreamingBodyMode streaming_body_mode_{StreamingBodyMode::none};
+  StreamingChunkState streaming_chunk_state_{StreamingChunkState::size};
   std::uint64_t streaming_body_remaining_{0};
+  std::uint64_t streaming_decoded_body_bytes_{0};
+  std::size_t streaming_trailer_bytes_{0};
   bool streaming_body_active_{false};
   std::string peer_ip_;
   uint16_t peer_port_{0};

@@ -1,11 +1,13 @@
 #pragma once
 
 #include <atomic>
+#include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <map>
 #include <memory>
 #include <string>
+#include <utility>
 
 #include "oklib/base/noncopyable.h"
 #include "oklib/net/callbacks.h"
@@ -42,6 +44,10 @@ class TcpServer : private oklib::Noncopyable {
   void set_connection_callback(ConnectionCallback callback) { connection_callback_ = std::move(callback); }
   void set_message_callback(MessageCallback callback) { message_callback_ = std::move(callback); }
   void set_write_complete_callback(WriteCompleteCallback callback) { write_complete_callback_ = std::move(callback); }
+  void set_high_water_mark_callback(HighWaterMarkCallback callback, std::size_t mark) {
+    high_water_mark_callback_ = std::move(callback);
+    high_water_mark_ = mark;
+  }
 
  private:
   void new_connection(int sockfd, const InetAddress& peer_address);
@@ -57,6 +63,8 @@ class TcpServer : private oklib::Noncopyable {
   ConnectionCallback connection_callback_{default_connection_callback};
   MessageCallback message_callback_{default_message_callback};
   WriteCompleteCallback write_complete_callback_;
+  HighWaterMarkCallback high_water_mark_callback_;
+  std::size_t high_water_mark_{64 * 1024 * 1024};
   ThreadInitCallback thread_init_callback_;
   std::atomic<bool> started_{false};
   int next_connection_id_{1};

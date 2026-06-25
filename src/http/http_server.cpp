@@ -36,6 +36,11 @@ bool has_transfer_encoding(const HttpRequest& request) {
   return !request.header("Transfer-Encoding").empty();
 }
 
+void send_bad_request_and_close(const oklib::net::TcpConnectionPtr& connection) {
+  connection->send("HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
+  connection->shutdown();
+}
+
 }  // namespace
 
 HttpServer::HttpServer(oklib::net::EventLoop* loop, const oklib::net::InetAddress& listen_address,
@@ -67,14 +72,17 @@ void HttpServer::on_message(const oklib::net::TcpConnectionPtr& connection,
                             oklib::Timestamp receive_time) {
   auto* context = std::any_cast<HttpContext>(&connection->mutable_context());
   if (context == nullptr) {
-    connection->send("HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
-    connection->shutdown();
+    send_bad_request_and_close(connection);
     return;
   }
 
   while (connection->connected()) {
     if (context->streaming_body_active()) {
       const auto status = context->process_streaming_body(buffer);
+      if (status == HttpParseStatus::error) {
+        send_bad_request_and_close(connection);
+        return;
+      }
       if (status == HttpParseStatus::incomplete) {
         return;
       }
@@ -88,8 +96,7 @@ void HttpServer::on_message(const oklib::net::TcpConnectionPtr& connection,
     const auto status = streaming_http_callback_ ? context->parse_request_head(buffer, receive_time)
                                                  : context->parse_request(buffer, receive_time);
     if (status == HttpParseStatus::error) {
-      connection->send("HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
-      connection->shutdown();
+      send_bad_request_and_close(connection);
       return;
     }
     if (status == HttpParseStatus::incomplete) {
@@ -105,6 +112,10 @@ void HttpServer::on_message(const oklib::net::TcpConnectionPtr& connection,
     }
     if (context->streaming_body_active()) {
       const auto body_status = context->process_streaming_body(buffer);
+      if (body_status == HttpParseStatus::error) {
+        send_bad_request_and_close(connection);
+        return;
+      }
       if (body_status == HttpParseStatus::incomplete) {
         return;
       }
@@ -145,22 +156,16 @@ bool HttpServer::on_streaming_request(const oklib::net::TcpConnectionPtr& connec
                                       HttpRequest request) {
   const bool close = should_close(request);
   const bool include_body = request.method() != HttpMethod::head;
-  if (has_transfer_encoding(request)) {
-    HttpResponse response(true);
-    response.set_status_code(HttpStatusCode::not_implemented);
-    response.set_body("501 Not Implemented");
-    oklib::net::Buffer output;
-    response.append_to_buffer(&output, include_body);
-    connection->send(&output);
-    connection->shutdown();
-    return true;
-  }
-
+  const bool chunked_body = has_transfer_encoding(request);
+  const auto body_length = request.content_length();
   auto writer = context->make_response_writer(connection, close, include_body);
   HttpRequestBodyStream body_stream;
-  const auto body_length = request.content_length();
   streaming_http_callback_(std::move(request), body_stream, std::move(writer));
-  context->start_streaming_body(std::move(body_stream), body_length);
+  if (chunked_body) {
+    context->start_streaming_chunked_body(std::move(body_stream));
+  } else {
+    context->start_streaming_body(std::move(body_stream), body_length);
+  }
   return close;
 }
 

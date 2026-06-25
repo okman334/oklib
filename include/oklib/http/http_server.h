@@ -1,7 +1,9 @@
 #pragma once
 
+#include <cstddef>
 #include <functional>
 #include <string>
+#include <utility>
 
 #include "oklib/base/noncopyable.h"
 #include "oklib/http/http_request_body_stream.h"
@@ -30,6 +32,9 @@ class HttpServer : private oklib::Noncopyable {
   }
   void set_streaming_http_callback(StreamingHttpCallback callback) {
     streaming_http_callback_ = std::move(callback);
+  }
+  void set_high_water_mark_callback(oklib::net::HighWaterMarkCallback callback, std::size_t mark) {
+    server_.set_high_water_mark_callback(std::move(callback), mark);
   }
   void set_thread_num(int num_threads) { server_.set_thread_num(num_threads); }
   void start();

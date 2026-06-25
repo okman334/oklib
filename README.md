@@ -60,7 +60,8 @@ workers.run([writer] {
 });
 ```
 
-For large `Content-Length` request bodies, register streaming body callbacks:
+For large `Content-Length` or `Transfer-Encoding: chunked` request bodies, register
+streaming body callbacks:
 
 ```cpp
 server.set_streaming_http_callback(
@@ -77,6 +78,17 @@ server.set_streaming_http_callback(
         writer.send(std::move(response));
       });
     });
+```
+
+HTTP servers can also observe TCP backpressure through the high-watermark
+callback:
+
+```cpp
+server.set_high_water_mark_callback(
+    [](const oklib::net::TcpConnectionPtr&, std::size_t buffered) {
+      OKLIB_LOG_WARN << "http output buffered bytes=" << buffered;
+    },
+    1024 * 1024);
 ```
 
 Run the TCP echo examples:
