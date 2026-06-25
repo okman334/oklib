@@ -98,6 +98,10 @@ bool expects_no_response_body(const HttpClientRequest& request) {
   return equals_ignore_case(request.method(), "HEAD");
 }
 
+std::string_view cache_scheme(const TlsClientOptions& tls_options) {
+  return tls_options.enabled ? std::string_view("https") : std::string_view("http");
+}
+
 }  // namespace
 
 struct HttpClientResponseStream::State {
@@ -407,7 +411,7 @@ void HttpClient::on_message(const oklib::net::TcpConnectionPtr&,
           response = std::move(*revalidated);
         }
       } else {
-        cache_->store("http", host_, completed_request.request, response, now);
+        cache_->store(cache_scheme(tls_options_), host_, completed_request.request, response, now);
       }
     }
     if (response_callback_) {
@@ -557,7 +561,10 @@ void HttpClient::send_in_loop(HttpClientRequest request) {
   QueuedRequest queued;
   queued.request = std::move(request);
   if (cache_ && !streaming_response_callback_) {
-    auto lookup = cache_->lookup("http", host_, queued.request, std::chrono::system_clock::now());
+    auto lookup = cache_->lookup(cache_scheme(tls_options_),
+                                 host_,
+                                 queued.request,
+                                 std::chrono::system_clock::now());
     if (lookup.state == HttpClientCache::LookupState::fresh) {
       deliver_cached_response(std::move(lookup.response));
       return;

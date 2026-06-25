@@ -1,6 +1,20 @@
 add_executable(oklib_http_server http_server.cpp)
 target_link_libraries(oklib_http_server PRIVATE oklib::http)
 
+add_executable(oklib_http_full_server http_full_server.cpp)
+target_link_libraries(oklib_http_full_server PRIVATE oklib::http)
+
+add_executable(oklib_http_client_demo http_client_demo.cpp)
+target_link_libraries(oklib_http_client_demo PRIVATE oklib::http)
+
+add_executable(oklib_http_benchmark http_benchmark.cpp)
+target_link_libraries(oklib_http_benchmark PRIVATE oklib::http)
+
+if(OKLIB_ENABLE_TLS)
+  add_executable(oklib_https_server https_server.cpp)
+  target_link_libraries(oklib_https_server PRIVATE oklib::http)
+endif()
+
 add_executable(oklib_tcp_echo_server tcp_echo_server.cpp)
 target_link_libraries(oklib_tcp_echo_server PRIVATE oklib::net)
 
