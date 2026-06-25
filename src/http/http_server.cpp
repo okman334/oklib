@@ -36,6 +36,17 @@ bool has_transfer_encoding(const HttpRequest& request) {
   return !request.header("Transfer-Encoding").empty();
 }
 
+std::string join_allowed_methods(const std::vector<std::string>& methods) {
+  std::string result;
+  for (const auto& method : methods) {
+    if (!result.empty()) {
+      result += ", ";
+    }
+    result += method;
+  }
+  return result;
+}
+
 void send_bad_request_and_close(const oklib::net::TcpConnectionPtr& connection) {
   connection->send("HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
   connection->shutdown();
@@ -104,9 +115,17 @@ void HttpServer::on_message(const oklib::net::TcpConnectionPtr& connection,
     }
 
     HttpRequest request = context->take_request();
-    const bool close = streaming_http_callback_ ? on_streaming_request(connection, context, std::move(request))
-                       : async_http_callback_   ? on_async_request(connection, context, std::move(request))
-                                                : on_request(connection, request);
+    bool close = false;
+    if (request.method() == HttpMethod::options &&
+        request.target_form() == HttpRequestTargetForm::asterisk) {
+      close = on_options_star(connection, request);
+    } else if (streaming_http_callback_) {
+      close = on_streaming_request(connection, context, std::move(request));
+    } else if (async_http_callback_) {
+      close = on_async_request(connection, context, std::move(request));
+    } else {
+      close = on_request(connection, request);
+    }
     if (!context->streaming_body_active()) {
       context->reset();
     }
@@ -134,6 +153,23 @@ bool HttpServer::on_request(const oklib::net::TcpConnectionPtr& connection, cons
   http_callback_(request, &response);
   oklib::net::Buffer output;
   response.append_to_buffer(&output, request.method() != HttpMethod::head);
+  connection->send(&output);
+  if (response.close_connection()) {
+    connection->shutdown();
+  }
+  return response.close_connection();
+}
+
+bool HttpServer::on_options_star(const oklib::net::TcpConnectionPtr& connection,
+                                 const HttpRequest& request) {
+  const bool close =
+      should_close(request) || request.has_content_length() || has_transfer_encoding(request);
+  HttpResponse response(close);
+  response.set_status_code(204);
+  response.add_header("Allow", join_allowed_methods(allowed_methods_));
+
+  oklib::net::Buffer output;
+  response.append_to_buffer(&output, false);
   connection->send(&output);
   if (response.close_connection()) {
     connection->shutdown();

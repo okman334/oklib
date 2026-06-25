@@ -140,6 +140,73 @@ std::string run_http_case(const std::string& request,
   return response;
 }
 
+std::string run_options_star_case() {
+  oklib::net::EventLoop loop;
+  oklib::http::HttpServer server(&loop,
+                                 oklib::net::InetAddress::loopback(0),
+                                 "http-options-star-test");
+  server.set_allowed_methods({"GET", "HEAD", "POST", "OPTIONS"});
+  server.set_http_callback([](const oklib::http::HttpRequest&, oklib::http::HttpResponse*) {
+    require(false, "OPTIONS * is handled by the server");
+  });
+  server.start();
+
+  std::string response;
+  std::jthread client([&] {
+    response = request_once(
+        "OPTIONS * HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n",
+        server.listen_address(),
+        &loop);
+  });
+  loop.run_after(std::chrono::seconds(2), [&] { loop.quit(); });
+  loop.loop();
+  client.join();
+  return response;
+}
+
+std::string run_protocol_exposure_case(const std::string& request) {
+  oklib::net::EventLoop loop;
+  oklib::http::HttpServer server(&loop,
+                                 oklib::net::InetAddress::loopback(0),
+                                 "http-protocol-exposure-test");
+  server.set_http_callback([](const oklib::http::HttpRequest& req, oklib::http::HttpResponse* response) {
+    std::string form = "unknown";
+    switch (req.target_form()) {
+      case oklib::http::HttpRequestTargetForm::origin:
+        form = "origin";
+        break;
+      case oklib::http::HttpRequestTargetForm::absolute:
+        form = "absolute";
+        break;
+      case oklib::http::HttpRequestTargetForm::authority:
+        form = "authority";
+        break;
+      case oklib::http::HttpRequestTargetForm::asterisk:
+        form = "asterisk";
+        break;
+      case oklib::http::HttpRequestTargetForm::unknown:
+        break;
+    }
+
+    response->set_status_code(oklib::http::HttpStatusCode::ok);
+    response->add_header("X-Method", req.method_string());
+    response->add_header("X-Target-Form", form);
+    response->add_header("X-Target", req.target());
+    response->add_header("X-Upgrade", req.header("Upgrade"));
+    response->set_content_type("text/plain");
+    response->set_body(req.method_string() + " " + form + " " + req.target() + " " +
+                       req.header("Upgrade"));
+  });
+  server.start();
+
+  std::string response;
+  std::jthread client([&] { response = request_once(request, server.listen_address(), &loop); });
+  loop.run_after(std::chrono::seconds(2), [&] { loop.quit(); });
+  loop.loop();
+  client.join();
+  return response;
+}
+
 std::string run_async_http_case(const std::string& request,
                                 std::atomic<bool>* worker_ran_in_loop_thread,
                                 const std::function<bool(const std::string&)>& done = {}) {
@@ -430,6 +497,37 @@ int main() {
 
   const auto missing_host = run_http_case("GET / HTTP/1.1\r\nConnection: close\r\n\r\n");
   require(missing_host.find("HTTP/1.1 400 Bad Request") != std::string::npos, "HTTP/1.1 requires Host");
+
+  const auto options_star = run_options_star_case();
+  require(options_star.find("HTTP/1.1 204 No Content") != std::string::npos,
+          "OPTIONS * returns 204");
+  require(options_star.find("Allow: GET, HEAD, POST, OPTIONS") != std::string::npos,
+          "OPTIONS * includes configured Allow");
+  require(options_star.find("Connection: close") != std::string::npos,
+          "OPTIONS * respects connection close");
+
+  const auto connect_response =
+      run_protocol_exposure_case("CONNECT upstream.example:443 HTTP/1.1\r\nHost: upstream.example:443\r\n"
+                                 "Connection: close\r\n\r\n");
+  require(connect_response.find("X-Method: CONNECT") != std::string::npos,
+          "CONNECT is exposed to application callback");
+  require(connect_response.find("X-Target-Form: authority") != std::string::npos,
+          "CONNECT authority target form exposed");
+  require(connect_response.find("CONNECT authority upstream.example:443") != std::string::npos,
+          "CONNECT target exposed");
+
+  const auto trace_response =
+      run_protocol_exposure_case("TRACE /trace HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
+  require(trace_response.find("X-Method: TRACE") != std::string::npos,
+          "TRACE is exposed to application callback");
+  require(trace_response.find("X-Target-Form: origin") != std::string::npos,
+          "TRACE origin target form exposed");
+
+  const auto upgrade_response =
+      run_protocol_exposure_case("GET /upgrade HTTP/1.1\r\nHost: localhost\r\nUpgrade: websocket\r\n"
+                                 "Connection: close\r\n\r\n");
+  require(upgrade_response.find("X-Upgrade: websocket") != std::string::npos,
+          "Upgrade header is exposed to application callback");
 
   const auto ambiguous_framing =
       run_http_case("POST /body HTTP/1.1\r\nHost: localhost\r\nTransfer-Encoding: chunked\r\n"

@@ -4,6 +4,7 @@
 #include <functional>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include "oklib/base/noncopyable.h"
 #include "oklib/http/http_request_body_stream.h"
@@ -33,6 +34,9 @@ class HttpServer : private oklib::Noncopyable {
   void set_streaming_http_callback(StreamingHttpCallback callback) {
     streaming_http_callback_ = std::move(callback);
   }
+  void set_allowed_methods(std::vector<std::string> methods) {
+    allowed_methods_ = std::move(methods);
+  }
   void set_high_water_mark_callback(oklib::net::HighWaterMarkCallback callback, std::size_t mark) {
     server_.set_high_water_mark_callback(std::move(callback), mark);
   }
@@ -47,6 +51,7 @@ class HttpServer : private oklib::Noncopyable {
   void on_message(const oklib::net::TcpConnectionPtr& connection, oklib::net::Buffer* buffer,
                   oklib::Timestamp receive_time);
   bool on_request(const oklib::net::TcpConnectionPtr& connection, const HttpRequest& request);
+  bool on_options_star(const oklib::net::TcpConnectionPtr& connection, const HttpRequest& request);
   bool on_async_request(const oklib::net::TcpConnectionPtr& connection,
                         HttpContext* context,
                         HttpRequest request);
@@ -59,6 +64,8 @@ class HttpServer : private oklib::Noncopyable {
   HttpCallback http_callback_;
   AsyncHttpCallback async_http_callback_;
   StreamingHttpCallback streaming_http_callback_;
+  std::vector<std::string> allowed_methods_{"GET", "HEAD", "POST", "PUT", "DELETE",
+                                            "OPTIONS", "TRACE", "CONNECT", "PATCH"};
 };
 
 }  // namespace oklib::http

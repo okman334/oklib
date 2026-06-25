@@ -22,7 +22,8 @@ class HttpResponse {
  public:
   explicit HttpResponse(bool close_connection = false) : close_connection_(close_connection) {}
 
-  void set_status_code(HttpStatusCode code) noexcept { status_code_ = code; }
+  void set_status_code(HttpStatusCode code) noexcept { status_code_ = static_cast<int>(code); }
+  void set_status_code(int code) noexcept { status_code_ = code; }
   void set_status_message(std::string message) { status_message_ = std::move(message); }
   void set_close_connection(bool on) noexcept { close_connection_ = on; }
   [[nodiscard]] bool close_connection() const noexcept { return close_connection_; }
@@ -38,7 +39,7 @@ class HttpResponse {
  private:
   [[nodiscard]] std::string status_message() const;
 
-  HttpStatusCode status_code_{HttpStatusCode::unknown};
+  int status_code_{static_cast<int>(HttpStatusCode::unknown)};
   std::string status_message_;
   bool close_connection_;
   std::map<std::string, std::string> headers_;

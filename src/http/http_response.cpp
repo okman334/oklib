@@ -1,12 +1,12 @@
 #include "oklib/http/http_response.h"
 
+#include "oklib/http/http_semantics.h"
 #include "oklib/net/buffer.h"
 
 namespace oklib::http {
 
 void HttpResponse::append_headers_to_buffer(oklib::net::Buffer* output, bool chunked) const {
-  const auto code = static_cast<int>(status_code_);
-  output->append("HTTP/1.1 " + std::to_string(code) + " " + status_message() + "\r\n");
+  output->append("HTTP/1.1 " + std::to_string(status_code_) + " " + status_message() + "\r\n");
   output->append(close_connection_ ? "Connection: close\r\n" : "Connection: Keep-Alive\r\n");
   if (chunked) {
     output->append("Transfer-Encoding: chunked\r\n");
@@ -30,17 +30,9 @@ std::string HttpResponse::status_message() const {
   if (!status_message_.empty()) {
     return status_message_;
   }
-  switch (status_code_) {
-    case HttpStatusCode::ok:
-      return "OK";
-    case HttpStatusCode::bad_request:
-      return "Bad Request";
-    case HttpStatusCode::not_found:
-      return "Not Found";
-    case HttpStatusCode::not_implemented:
-      return "Not Implemented";
-    case HttpStatusCode::unknown:
-      break;
+  const auto standard = standard_reason_phrase(status_code_);
+  if (!standard.empty()) {
+    return std::string(standard);
   }
   return "Unknown";
 }
