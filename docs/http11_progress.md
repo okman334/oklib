@@ -3,7 +3,8 @@
 ## Current Phase
 
 - Phase 4: HTTP client.
-  - Next scope: nonblocking client request serialization, response parser integration, keep-alive reuse, close/reconnect behavior, buffered callbacks, and streaming response callbacks.
+  - Completed in this phase: nonblocking buffered `HttpClient`, request serialization, response parser integration, keep-alive reuse, server-close reconnect for later requests, queued-before-connect request coalescing, optional TCP retry wiring, and chunked response decoding.
+  - Remaining in this phase: streaming response callbacks and `Expect: 100-continue`.
 
 ## Completed Phases
 
@@ -60,6 +61,8 @@
 - 2026-06-25: `ctest --test-dir build --output-on-failure` passed, 8/8 tests after Content-Length request streaming and chunked streaming rejection guard.
 - 2026-06-25: `cmake --build build --parallel` passed after completing Phase 3.
 - 2026-06-25: `ctest --test-dir build --output-on-failure` passed, 8/8 tests after completing Phase 3.
+- 2026-06-25: `oklib.http.client` passed after buffered HttpClient implementation.
+- 2026-06-25: `ctest --test-dir build --output-on-failure` passed, 9/9 tests after buffered HttpClient implementation.
 
 ## Latest Commit / Push
 
@@ -70,8 +73,9 @@
 - Phase 3 chunked response streaming commit: `710a4cb`.
 - Phase 3 request body streaming commit: `d8b6cb5`.
 - Phase 3 completion commit: `add304b`.
+- Phase 4 buffered HttpClient commit: `bb1ff92`.
 - Push: `origin/codex/http11-compliance`.
 
 ## Next Step
 
-- Start Phase 4 with failing tests for the HTTP client buffered request/response path.
+- Continue Phase 4 with failing tests for streaming response callbacks, then `Expect: 100-continue`.
