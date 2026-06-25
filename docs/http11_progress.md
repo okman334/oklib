@@ -2,8 +2,8 @@
 
 ## Current Phase
 
-- Next Phase D: complete HTTP examples and benchmark.
-  - Next scope: full HTTP server/client examples, HTTPS examples gated by `OKLIB_ENABLE_TLS`, and local keep-alive benchmark.
+- Phase D complete.
+  - Next scope: review/merge this branch, then choose the next HTTP scope such as stricter RFC fuzz/boundary coverage, cache refinements, TLS polish, or external benchmark comparison.
 
 ## Completed Phases
 
@@ -81,10 +81,17 @@
   - Stabilized the client cache body-limit test by separating independent EventLoop fixtures.
   - Commits: `b96c044`, `7a7f951`.
   - Push: `origin/codex/http11-compliance`.
+- Phase D: complete HTTP examples and benchmark.
+  - Added reusable demo routes for headers/query inspection, POST echo, streaming upload accounting, async worker responses, chunked streaming responses, cache headers with ETag revalidation, and 404 handling.
+  - Added `oklib_http_full_server`, `oklib_http_client_demo`, and `oklib_http_benchmark` examples.
+  - Added gated `oklib_https_server` example when `OKLIB_ENABLE_TLS=ON`.
+  - `HttpClient` private cache keys now use `https` when TLS is enabled.
+  - Commit: `fcb1611`.
+  - Push: `origin/codex/http11-compliance`.
 
 ## Incomplete Phases
 
-- Phase D: complete HTTP examples and benchmark.
+- None for this HTTP next-stage plan.
 
 ## Current Blockers
 
@@ -120,6 +127,13 @@
 - 2026-06-25: `cmake -S . -B build-tls -DOKLIB_ENABLE_TLS=ON -DCMAKE_BUILD_TYPE=Debug` passed.
 - 2026-06-25: `cmake --build build-tls --parallel` passed.
 - 2026-06-25: `ctest --test-dir build-tls --output-on-failure` passed, 14/14 tests after Phase C TLS changes.
+- 2026-06-25: `cmake --build build --parallel` passed after Phase D examples/benchmark.
+- 2026-06-25: `ctest --test-dir build --output-on-failure` passed, 13/13 tests after Phase D examples/benchmark.
+- 2026-06-25: `cmake --build build-tls --parallel` passed after Phase D examples/benchmark.
+- 2026-06-25: `ctest --test-dir build-tls --output-on-failure` passed, 14/14 tests after Phase D examples/benchmark.
+- 2026-06-25: `./build/examples/oklib_http_benchmark --requests 20 --clients 2 --body-size 8` passed; sample output `requests=20 clients=2 server_threads=0 seconds=0.00 qps=18937.15 avg_us=100.20 p95_us=322 p99_us=410`.
+- 2026-06-25: `oklib_http_full_server` + `oklib_http_client_demo` plain HTTP smoke passed against `127.0.0.1:18080`.
+- 2026-06-25: `oklib_https_server` + `oklib_http_client_demo --https` smoke passed against `127.0.0.1:18443` with a temporary self-signed certificate and peer verification disabled.
 
 ## Latest Commit / Push
 
@@ -138,8 +152,9 @@
 - Phase B HttpClient private cache commit: `798565e`.
 - Phase B cache test stabilization commit: `b96c044`.
 - Phase C optional TLS commit: `7a7f951`.
+- Phase D examples and benchmark commit: `fcb1611`.
 - Push: `origin/codex/http11-compliance`.
 
 ## Next Step
 
-- Start Phase D with full HTTP server/client examples, HTTPS examples gated by `OKLIB_ENABLE_TLS`, and a local keep-alive benchmark.
+- Review/merge `codex/http11-compliance`, or start the next HTTP iteration from stricter RFC stress tests, cache refinements, TLS polish, or external benchmark comparison.
