@@ -72,7 +72,8 @@ add_library(oklib_http STATIC
   src/http/http_response_writer.cpp
   src/http/http_router.cpp
   src/http/http_semantics.cpp
-  src/http/http_server.cpp)
+  src/http/http_server.cpp
+  src/http/http_sync_client.cpp)
 if(OKLIB_ENABLE_TLS)
   target_sources(oklib_http PRIVATE src/http/tls_engine.cpp)
 endif()

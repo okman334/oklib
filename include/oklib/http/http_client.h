@@ -1,5 +1,6 @@
 #pragma once
 
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <deque>
@@ -35,12 +36,16 @@ class HttpClientRequest {
 
   [[nodiscard]] const std::string& method() const noexcept { return method_; }
   [[nodiscard]] const std::string& target() const noexcept { return target_; }
+  [[nodiscard]] const std::string& url() const noexcept { return url_; }
   [[nodiscard]] const std::string& body() const noexcept { return body_; }
   [[nodiscard]] const HttpHeaders& headers() const noexcept { return headers_; }
+  [[nodiscard]] std::chrono::milliseconds timeout() const noexcept { return timeout_; }
 
   void set_method(std::string method) { method_ = std::move(method); }
   void set_target(std::string target) { target_ = std::move(target); }
+  void set_url(std::string url) { url_ = std::move(url); }
   void set_body(std::string body) { body_ = std::move(body); }
+  void set_timeout(std::chrono::milliseconds timeout) { timeout_ = timeout; }
   void add_header(std::string_view field, std::string_view value) { headers_.add(field, value); }
   void set_header(std::string_view field, std::string_view value) { headers_.set(field, value); }
 
@@ -49,8 +54,10 @@ class HttpClientRequest {
  private:
   std::string method_;
   std::string target_;
+  std::string url_;
   HttpHeaders headers_;
   std::string body_;
+  std::chrono::milliseconds timeout_{0};
 };
 
 class HttpClientResponseStream {

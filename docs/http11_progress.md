@@ -3,7 +3,8 @@
 ## Current Phase
 
 - Phase D complete.
-  - Next scope: review/merge this branch, then choose the next HTTP scope such as stricter RFC fuzz/boundary coverage, cache refinements, TLS polish, or external benchmark comparison.
+  - Post-plan sync client increment complete.
+  - Next scope: choose the next HTTP scope such as stricter RFC fuzz/boundary coverage, cache refinements, TLS polish, external benchmark comparison, or DNS/proxy support for the synchronous client.
 
 ## Completed Phases
 
@@ -88,6 +89,11 @@
   - `HttpClient` private cache keys now use `https` when TLS is enabled.
   - Commit: `fcb1611`.
   - Push: `origin/codex/http11-compliance`.
+- Post-plan sync client increment.
+  - Added `HttpSyncClient` with libhv-style blocking `send(HttpClientRequest*, HttpResponseMessage*)`.
+  - Added `HttpClientRequest::set_url(...)` and `set_timeout(...)` for synchronous request setup.
+  - Added guarded error returns for bad URLs, unsupported schemes/hosts, timeouts, TLS-disabled HTTPS, and calls from an existing `EventLoop` thread.
+  - Added `oklib.http.sync_client` coverage and `oklib_http_sync_client_demo`.
 
 ## Incomplete Phases
 
@@ -134,6 +140,10 @@
 - 2026-06-25: `./build/examples/oklib_http_benchmark --requests 20 --clients 2 --body-size 8` passed; sample output `requests=20 clients=2 server_threads=0 seconds=0.00 qps=18937.15 avg_us=100.20 p95_us=322 p99_us=410`.
 - 2026-06-25: `oklib_http_full_server` + `oklib_http_client_demo` plain HTTP smoke passed against `127.0.0.1:18080`.
 - 2026-06-25: `oklib_https_server` + `oklib_http_client_demo --https` smoke passed against `127.0.0.1:18443` with a temporary self-signed certificate and peer verification disabled.
+- 2026-06-25: `cmake --build build --parallel` passed after adding `HttpSyncClient`.
+- 2026-06-25: `ctest --test-dir build --output-on-failure` passed, 16/16 tests after adding `HttpSyncClient`.
+- 2026-06-25: `cmake --build build-tls --parallel` passed after adding `HttpSyncClient`.
+- 2026-06-25: `ctest --test-dir build-tls --output-on-failure` passed, 17/17 tests after adding `HttpSyncClient`.
 
 ## Latest Commit / Push
 

@@ -7,6 +7,9 @@ target_link_libraries(oklib_http_full_server PRIVATE oklib::http)
 add_executable(oklib_http_client_demo http_client_demo.cpp)
 target_link_libraries(oklib_http_client_demo PRIVATE oklib::http)
 
+add_executable(oklib_http_sync_client_demo http_sync_client_demo.cpp)
+target_link_libraries(oklib_http_sync_client_demo PRIVATE oklib::http)
+
 add_executable(oklib_http_benchmark http_benchmark.cpp)
 target_link_libraries(oklib_http_benchmark PRIVATE oklib::http)
 

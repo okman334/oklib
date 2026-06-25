@@ -28,6 +28,10 @@ add_executable(oklib_http_client_test http/http_client_test.cpp)
 target_link_libraries(oklib_http_client_test PRIVATE oklib::http)
 add_test(NAME oklib.http.client COMMAND oklib_http_client_test)
 
+add_executable(oklib_http_sync_client_test http/http_sync_client_test.cpp)
+target_link_libraries(oklib_http_sync_client_test PRIVATE oklib::http)
+add_test(NAME oklib.http.sync_client COMMAND oklib_http_sync_client_test)
+
 add_executable(oklib_http_client_cache_test http/http_client_cache_test.cpp)
 target_link_libraries(oklib_http_client_cache_test PRIVATE oklib::http)
 add_test(NAME oklib.http.client_cache COMMAND oklib_http_client_cache_test)
