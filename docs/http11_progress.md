@@ -2,8 +2,8 @@
 
 ## Current Phase
 
-- Planned HTTP/1.1 phases are complete.
-  - Next optional scope: stricter RFC edge-case coverage, private client cache integration, or higher-level examples using the new HTTP client/server APIs.
+- Next Phase B: `HttpClient` private in-process cache integration.
+  - Next scope: opt-in buffered GET/HEAD cache, fresh hit, revalidation, Vary matching, and LRU/body limits.
 
 ## Completed Phases
 
@@ -59,10 +59,19 @@
   - Added validator header generation from cached ETag and Last-Modified metadata.
   - Commit: `3e5cdc2`.
   - Push: `origin/codex/http11-compliance`.
+- Phase A: stricter RFC boundary hardening.
+  - Added `oklib.http.edge` coverage for 204/304 no-body parsing, invalid chunk extensions, forbidden trailer framing fields, HEAD client responses, and comma-separated `Connection` tokens.
+  - Parser now ignores prohibited response bodies for 1xx/204/205/304, validates chunk extensions, and rejects forbidden `Content-Length`/`Transfer-Encoding`/`Host` trailer fields.
+  - Server response serialization suppresses bodies for no-body status codes.
+  - Server and client now parse `Connection` as a comma-separated token list.
+  - Commit: `c744b4c`.
+  - Push: pending.
 
 ## Incomplete Phases
 
-- None for the original HTTP/1.1 phased plan.
+- Phase B: `HttpClient` private cache integration.
+- Phase C: optional OpenSSL TLS client/server.
+- Phase D: complete HTTP examples and benchmark.
 
 ## Current Blockers
 
@@ -89,6 +98,8 @@
 - 2026-06-25: `ctest --test-dir build --output-on-failure` passed, 10/10 tests after completing Phase 5.
 - 2026-06-25: `cmake --build build --parallel` passed after completing Phase 6.
 - 2026-06-25: `ctest --test-dir build --output-on-failure` passed, 11/11 tests after completing Phase 6.
+- 2026-06-25: `cmake --build build --parallel` passed after Phase A boundary hardening.
+- 2026-06-25: `ctest --test-dir build --output-on-failure` passed, 12/12 tests after Phase A boundary hardening.
 
 ## Latest Commit / Push
 
@@ -103,8 +114,9 @@
 - Phase 4 completion commit: `6d47852`.
 - Phase 5 semantic helpers commit: `a89114f`.
 - Phase 6 cache helpers commit: `3e5cdc2`.
+- Phase A RFC boundary hardening commit: `c744b4c`.
 - Push: `origin/codex/http11-compliance`.
 
 ## Next Step
 
-- Decide the next roadmap item: stricter RFC conformance edge cases, private cache integration in `HttpClient`, TLS support, or production examples/benchmarks.
+- Start Phase B with failing tests for opt-in `HttpClientCache`, fresh cache hits, stale ETag revalidation, Vary mismatch, and cache limits.
