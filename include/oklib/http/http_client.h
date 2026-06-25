@@ -5,6 +5,7 @@
 #include <deque>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -16,8 +17,11 @@
 
 namespace oklib::http {
 
+class HttpClientCache;
+
 struct HttpClientOptions {
   bool retry{false};
+  std::shared_ptr<HttpClientCache> cache;
 };
 
 class HttpClientRequest {
@@ -103,6 +107,11 @@ class HttpClient : private oklib::Noncopyable {
     trailers,
   };
 
+  struct QueuedRequest {
+    HttpClientRequest request;
+    std::optional<std::size_t> cache_entry_id;
+  };
+
   void on_connection(const oklib::net::TcpConnectionPtr& connection);
   void on_message(const oklib::net::TcpConnectionPtr& connection,
                   oklib::net::Buffer* buffer,
@@ -116,18 +125,20 @@ class HttpClient : private oklib::Noncopyable {
   HttpParseStatus process_chunked_streaming_body(oklib::net::Buffer* buffer);
   void finish_streaming_response();
   void handle_parse_error();
+  void deliver_cached_response(HttpResponseMessage response);
   [[nodiscard]] bool response_closes_connection(const HttpResponseMessage& response) const;
 
   oklib::net::EventLoop* loop_;
   std::string host_;
   oklib::net::TcpClient client_;
+  std::shared_ptr<HttpClientCache> cache_;
   ResponseCallback response_callback_;
   StreamingResponseCallback streaming_response_callback_;
   ErrorCallback error_callback_;
   HttpParser parser_{HttpParserMode::response};
   oklib::net::TcpConnectionPtr connection_;
-  std::deque<HttpClientRequest> pending_requests_;
-  std::deque<HttpClientRequest> in_flight_requests_;
+  std::deque<QueuedRequest> pending_requests_;
+  std::deque<QueuedRequest> in_flight_requests_;
   HttpClientResponseStream response_stream_;
   StreamingBodyMode streaming_body_mode_{StreamingBodyMode::none};
   StreamingChunkState streaming_chunk_state_{StreamingChunkState::size};

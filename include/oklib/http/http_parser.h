@@ -42,6 +42,12 @@ struct HttpParserOptions {
   std::size_t max_body{8 * 1024 * 1024};
 };
 
+enum class HttpClientResponseSource {
+  network,
+  cache,
+  revalidated,
+};
+
 struct HttpResponseMessage {
   HttpVersion version{HttpVersion::unknown};
   int status_code{0};
@@ -51,6 +57,7 @@ struct HttpResponseMessage {
   std::string body;
   std::optional<std::uint64_t> content_length;
   bool chunked{false};
+  HttpClientResponseSource source{HttpClientResponseSource::network};
 };
 
 class HttpParser {

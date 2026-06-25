@@ -3,11 +3,13 @@
 #include <algorithm>
 #include <atomic>
 #include <charconv>
+#include <chrono>
 #include <cctype>
 #include <mutex>
 #include <string_view>
 #include <utility>
 
+#include "oklib/http/http_client_cache.h"
 #include "oklib/http/http_semantics.h"
 #include "oklib/net/buffer.h"
 #include "oklib/net/event_loop.h"
@@ -203,7 +205,8 @@ HttpClient::HttpClient(oklib::net::EventLoop* loop,
                        HttpClientOptions options)
     : loop_(loop),
       host_(std::move(host)),
-      client_(loop, server_address, std::move(name)) {
+      client_(loop, server_address, std::move(name)),
+      cache_(std::move(options.cache)) {
   if (options.retry) {
     client_.enable_retry();
   }
@@ -294,7 +297,7 @@ void HttpClient::on_message(const oklib::net::TcpConnectionPtr&,
     }
 
     const bool request_expects_no_body =
-        !in_flight_requests_.empty() && expects_no_response_body(in_flight_requests_.front());
+        !in_flight_requests_.empty() && expects_no_response_body(in_flight_requests_.front().request);
     const auto status = streaming_response_callback_ || request_expects_no_body
                             ? parser_.parse_response_head(buffer)
                             : parser_.parse_response(buffer);
@@ -362,8 +365,23 @@ void HttpClient::on_message(const oklib::net::TcpConnectionPtr&,
 
     const bool close_after_response = response_closes_connection(response);
     parser_.reset();
+    QueuedRequest completed_request;
+    bool has_completed_request = false;
     if (!in_flight_requests_.empty()) {
+      completed_request = std::move(in_flight_requests_.front());
       in_flight_requests_.pop_front();
+      has_completed_request = true;
+    }
+    if (cache_ && has_completed_request) {
+      const auto now = std::chrono::system_clock::now();
+      if (response.status_code == 304 && completed_request.cache_entry_id.has_value()) {
+        if (auto revalidated = cache_->update_from_304(*completed_request.cache_entry_id, response, now);
+            revalidated.has_value()) {
+          response = std::move(*revalidated);
+        }
+      } else {
+        cache_->store("http", host_, completed_request.request, response, now);
+      }
     }
     if (response_callback_) {
       response_callback_(std::move(response));
@@ -509,7 +527,23 @@ void HttpClient::finish_streaming_response() {
 void HttpClient::send_in_loop(HttpClientRequest request) {
   loop_->assert_in_loop_thread();
   stopped_ = false;
-  pending_requests_.push_back(std::move(request));
+  QueuedRequest queued;
+  queued.request = std::move(request);
+  if (cache_ && !streaming_response_callback_) {
+    auto lookup = cache_->lookup("http", host_, queued.request, std::chrono::system_clock::now());
+    if (lookup.state == HttpClientCache::LookupState::fresh) {
+      deliver_cached_response(std::move(lookup.response));
+      return;
+    }
+    if (lookup.state == HttpClientCache::LookupState::stale && lookup.entry_id.has_value()) {
+      for (const auto& entry : lookup.validation_headers.entries()) {
+        queued.request.set_header(entry.field, entry.value);
+      }
+      queued.cache_entry_id = lookup.entry_id;
+    }
+  }
+
+  pending_requests_.push_back(std::move(queued));
   if (!connection_ || !connection_->connected()) {
     request_connect();
     return;
@@ -536,10 +570,10 @@ void HttpClient::flush_requests() {
   }
 
   while (!pending_requests_.empty()) {
-    HttpClientRequest request = std::move(pending_requests_.front());
+    QueuedRequest request = std::move(pending_requests_.front());
     pending_requests_.pop_front();
-    const bool wait_for_continue = expects_continue(request);
-    connection_->send(request.serialize(host_, !wait_for_continue));
+    const bool wait_for_continue = expects_continue(request.request);
+    connection_->send(request.request.serialize(host_, !wait_for_continue));
     in_flight_requests_.push_back(std::move(request));
     if (wait_for_continue) {
       awaiting_continue_ = true;
@@ -553,7 +587,7 @@ void HttpClient::handle_continue_response() {
   if (!awaiting_continue_ || !connection_ || !connection_->connected() || in_flight_requests_.empty()) {
     return;
   }
-  connection_->send(in_flight_requests_.front().body());
+  connection_->send(in_flight_requests_.front().request.body());
   awaiting_continue_ = false;
 }
 
@@ -573,6 +607,15 @@ void HttpClient::handle_parse_error() {
     error_callback_();
   }
   client_.disconnect();
+}
+
+void HttpClient::deliver_cached_response(HttpResponseMessage response) {
+  loop_->assert_in_loop_thread();
+  loop_->queue_in_loop([this, response = std::move(response)]() mutable {
+    if (!stopped_ && response_callback_) {
+      response_callback_(std::move(response));
+    }
+  });
 }
 
 bool HttpClient::response_closes_connection(const HttpResponseMessage& response) const {

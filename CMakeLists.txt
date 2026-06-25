@@ -58,6 +58,7 @@ target_compile_features(oklib_net PUBLIC cxx_std_20)
 add_library(oklib_http STATIC
   src/http/http_cache.cpp
   src/http/http_client.cpp
+  src/http/http_client_cache.cpp
   src/http/http_context.cpp
   src/http/http_headers.cpp
   src/http/http_parser.cpp
