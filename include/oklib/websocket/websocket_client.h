@@ -67,6 +67,7 @@ class WebSocketClient : private oklib::Noncopyable {
   void on_plain_message(oklib::net::Buffer* buffer);
   void on_websocket_message(oklib::net::Buffer* buffer);
   void report_error(WebSocketError error);
+  void close_for_error(WebSocketError error, std::string reason);
   void notify_close(WebSocketCloseInfo info);
   void reset_connection_state();
 

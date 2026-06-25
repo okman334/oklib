@@ -569,10 +569,7 @@ void WebSocketClient::on_websocket_message(oklib::net::Buffer* buffer) {
   const auto parse_status = frame_parser_.parse(buffer, &frames);
   if (parse_status == WebSocketParseStatus::error) {
     const auto error = frame_parser_.error();
-    report_error(error);
-    if (channel_) {
-      channel_->close(close_code_for_error(error), "protocol error");
-    }
+    close_for_error(error, "protocol error");
     return;
   }
 
@@ -581,10 +578,7 @@ void WebSocketClient::on_websocket_message(oklib::net::Buffer* buffer) {
     const auto message_status = message_assembler_.consume(frame, &message);
     if (message_status == WebSocketMessageStatus::error) {
       const auto error = message_assembler_.error();
-      report_error(error);
-      if (channel_) {
-        channel_->close(close_code_for_error(error), "protocol error");
-      }
+      close_for_error(error, "protocol error");
       return;
     }
 
@@ -602,10 +596,7 @@ void WebSocketClient::on_websocket_message(oklib::net::Buffer* buffer) {
         bool ok = false;
         WebSocketCloseInfo info = close_info_from_payload(frame.payload, &ok);
         if (!ok) {
-          report_error(WebSocketError::protocol_error);
-          if (channel_) {
-            channel_->close(1002, "bad close frame");
-          }
+          close_for_error(WebSocketError::protocol_error, "bad close frame");
           return;
         }
         if (channel_) {
@@ -628,18 +619,12 @@ void WebSocketClient::on_websocket_message(oklib::net::Buffer* buffer) {
     if (message.compressed) {
       std::string inflated;
       if (!compression_enabled_ || !websocket_inflate(message.payload, &inflated)) {
-        report_error(WebSocketError::compression_error);
-        if (channel_) {
-          channel_->close(1002, "compression error");
-        }
+        close_for_error(WebSocketError::compression_error, "compression error");
         return;
       }
       message.payload = std::move(inflated);
       if (message.opcode == WebSocketOpcode::text && !valid_utf8(message.payload)) {
-        report_error(WebSocketError::invalid_utf8);
-        if (channel_) {
-          channel_->close(1007, "invalid utf-8");
-        }
+        close_for_error(WebSocketError::invalid_utf8, "invalid utf-8");
         return;
       }
     }
@@ -654,6 +639,15 @@ void WebSocketClient::report_error(WebSocketError error) {
   if (error_callback_) {
     error_callback_(channel_, error);
   }
+}
+
+void WebSocketClient::close_for_error(WebSocketError error, std::string reason) {
+  const auto code = close_code_for_error(error);
+  report_error(error);
+  if (channel_) {
+    channel_->close(code, reason);
+  }
+  notify_close(WebSocketCloseInfo{code, std::move(reason)});
 }
 
 void WebSocketClient::notify_close(WebSocketCloseInfo info) {

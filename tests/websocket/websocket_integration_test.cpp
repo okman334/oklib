@@ -1,18 +1,29 @@
 #include <oklib/http/http_response.h>
 #include <oklib/http/http_client.h>
 #include <oklib/net/event_loop.h>
+#include <oklib/net/buffer.h>
+#include <oklib/net/tcp_connection.h>
+#include <oklib/net/tcp_server.h>
 #include <oklib/websocket/websocket_client.h>
+#include <oklib/websocket/websocket_frame.h>
+#include <oklib/websocket/websocket_handshake.h>
 #include <oklib/websocket/websocket_server.h>
 
+#include <arpa/inet.h>
+#include <sys/socket.h>
+#include <unistd.h>
+
+#include <algorithm>
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <cstdlib>
 #include <filesystem>
 #include <iostream>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
-#include <unistd.h>
 
 namespace {
 
@@ -21,6 +32,245 @@ void require(bool condition, const char* message) {
     std::cerr << "require failed: " << message << '\n';
     std::exit(1);
   }
+}
+
+std::string raw_request_once(const oklib::net::InetAddress& address,
+                             const std::string& request) {
+  int fd = ::socket(AF_INET, SOCK_STREAM, 0);
+  require(fd >= 0, "raw socket succeeds");
+  require(::connect(fd, address.sockaddr_ptr(), address.length()) == 0, "raw connect succeeds");
+  require(::write(fd, request.data(), request.size()) == static_cast<ssize_t>(request.size()),
+          "raw request write succeeds");
+
+  std::string response;
+  char buffer[4096];
+  for (;;) {
+    const auto n = ::read(fd, buffer, sizeof(buffer));
+    if (n > 0) {
+      response.append(buffer, static_cast<std::size_t>(n));
+      if (response.find("\r\n\r\n") != std::string::npos) {
+        break;
+      }
+      continue;
+    }
+    break;
+  }
+  ::close(fd);
+  return response;
+}
+
+std::string websocket_upgrade_request(std::string_view key,
+                                      std::string_view path = "/ws",
+                                      std::string_view version = "13") {
+  std::string request;
+  request.append("GET ");
+  request.append(path);
+  request.append(" HTTP/1.1\r\nHost: localhost\r\nUpgrade: websocket\r\n"
+                 "Connection: Upgrade\r\nSec-WebSocket-Key: ");
+  request.append(key);
+  request.append("\r\nSec-WebSocket-Version: ");
+  request.append(version);
+  request.append("\r\n\r\n");
+  return request;
+}
+
+std::string raw_header_value(std::string_view request, std::string_view field) {
+  const std::string prefix = std::string(field) + ": ";
+  const auto pos = request.find(prefix);
+  if (pos == std::string_view::npos) {
+    return {};
+  }
+  const auto value_start = pos + prefix.size();
+  const auto value_end = request.find("\r\n", value_start);
+  if (value_end == std::string_view::npos) {
+    return {};
+  }
+  return std::string(request.substr(value_start, value_end - value_start));
+}
+
+bool read_one_frame(int fd,
+                    oklib::websocket::WebSocketEndpointRole role,
+                    oklib::websocket::WebSocketFrame* frame) {
+  oklib::net::Buffer input;
+  oklib::websocket::WebSocketFrameParser parser(role);
+  std::vector<oklib::websocket::WebSocketFrame> frames;
+  char buffer[4096];
+  for (;;) {
+    const auto n = ::read(fd, buffer, sizeof(buffer));
+    if (n <= 0) {
+      return false;
+    }
+    input.append(buffer, static_cast<std::size_t>(n));
+    const auto status = parser.parse(&input, &frames);
+    if (status == oklib::websocket::WebSocketParseStatus::error) {
+      return false;
+    }
+    if (!frames.empty()) {
+      *frame = std::move(frames.front());
+      return true;
+    }
+  }
+}
+
+void test_websocket_client_replies_to_ping() {
+  using namespace std::chrono_literals;
+
+  oklib::net::EventLoop loop;
+  oklib::net::TcpServer raw_server(&loop,
+                                   oklib::net::InetAddress::loopback(0),
+                                   "websocket-client-ping-raw-server");
+  bool handshake_sent = false;
+  bool pong_received = false;
+  bool failed = false;
+  std::string request_bytes;
+  oklib::websocket::WebSocketFrameParser parser(oklib::websocket::WebSocketEndpointRole::server);
+  raw_server.set_message_callback([&](const oklib::net::TcpConnectionPtr& connection,
+                                      oklib::net::Buffer* buffer,
+                                      oklib::Timestamp) {
+    if (!handshake_sent) {
+      request_bytes.append(buffer->retrieve_all_as_string());
+      if (request_bytes.find("\r\n\r\n") == std::string::npos) {
+        return;
+      }
+      const auto key = raw_header_value(request_bytes, "Sec-WebSocket-Key");
+      if (key.empty()) {
+        failed = true;
+        loop.quit();
+        return;
+      }
+      std::string response =
+          "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\n"
+          "Connection: Upgrade\r\nSec-WebSocket-Accept: ";
+      response.append(oklib::websocket::websocket_accept_key(key));
+      response.append("\r\n\r\n");
+      connection->send(response);
+
+      oklib::websocket::WebSocketFrame ping;
+      ping.opcode = oklib::websocket::WebSocketOpcode::ping;
+      ping.payload = "from-server";
+      connection->send(oklib::websocket::encode_websocket_frame(
+          ping, oklib::websocket::WebSocketMasking::unmasked));
+      handshake_sent = true;
+      return;
+    }
+
+    std::vector<oklib::websocket::WebSocketFrame> frames;
+    const auto status = parser.parse(buffer, &frames);
+    if (status == oklib::websocket::WebSocketParseStatus::error) {
+      failed = true;
+      loop.quit();
+      return;
+    }
+    for (const auto& frame : frames) {
+      if (frame.opcode == oklib::websocket::WebSocketOpcode::pong &&
+          frame.payload == "from-server") {
+        pong_received = true;
+        loop.quit();
+        return;
+      }
+    }
+  });
+  raw_server.start();
+
+  oklib::websocket::WebSocketClient client(&loop, "websocket-client-ping-test");
+  client.set_error_callback([&](const oklib::websocket::WebSocketChannelPtr&,
+                                oklib::websocket::WebSocketError) {
+    failed = true;
+    loop.quit();
+  });
+  const std::string url =
+      "ws://127.0.0.1:" + std::to_string(raw_server.port()) + "/ping";
+  require(client.open(url) == 0, "client ping test open starts");
+  loop.run_after(3s, [&] {
+    failed = true;
+    loop.quit();
+  });
+  loop.loop();
+
+  require(!failed, "client ping test did not fail");
+  require(handshake_sent, "raw websocket server sent handshake");
+  require(pong_received, "client automatically replies pong to server ping");
+}
+
+void test_websocket_client_reports_protocol_close() {
+  using namespace std::chrono_literals;
+
+  oklib::net::EventLoop loop;
+  oklib::net::TcpServer raw_server(&loop,
+                                   oklib::net::InetAddress::loopback(0),
+                                   "websocket-client-protocol-raw-server");
+  bool handshake_sent = false;
+  bool failed = false;
+  bool saw_protocol_error = false;
+  bool saw_protocol_close = false;
+  std::string request_bytes;
+  raw_server.set_message_callback([&](const oklib::net::TcpConnectionPtr& connection,
+                                      oklib::net::Buffer* buffer,
+                                      oklib::Timestamp) {
+    if (handshake_sent) {
+      buffer->retrieve_all();
+      return;
+    }
+    request_bytes.append(buffer->retrieve_all_as_string());
+    if (request_bytes.find("\r\n\r\n") == std::string::npos) {
+      return;
+    }
+    const auto key = raw_header_value(request_bytes, "Sec-WebSocket-Key");
+    if (key.empty()) {
+      failed = true;
+      loop.quit();
+      return;
+    }
+    std::string response =
+        "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\n"
+        "Connection: Upgrade\r\nSec-WebSocket-Accept: ";
+    response.append(oklib::websocket::websocket_accept_key(key));
+    response.append("\r\n\r\n");
+    connection->send(response);
+
+    oklib::websocket::WebSocketFrame bad_server_frame;
+    bad_server_frame.opcode = oklib::websocket::WebSocketOpcode::text;
+    bad_server_frame.payload = "masked-from-server";
+    connection->send(oklib::websocket::encode_websocket_frame(
+        bad_server_frame,
+        oklib::websocket::WebSocketMasking::masked,
+        std::array<unsigned char, 4>{9, 8, 7, 6}));
+    handshake_sent = true;
+  });
+  raw_server.start();
+
+  oklib::websocket::WebSocketClient client(&loop, "websocket-client-protocol-test");
+  client.set_error_callback([&](const oklib::websocket::WebSocketChannelPtr&,
+                                oklib::websocket::WebSocketError error) {
+    saw_protocol_error = error == oklib::websocket::WebSocketError::protocol_error;
+  });
+  client.set_close_callback([&](const oklib::websocket::WebSocketChannelPtr&,
+                                oklib::websocket::WebSocketCloseInfo info) {
+    saw_protocol_close = info.code == 1002;
+    loop.quit();
+  });
+  const std::string url =
+      "ws://127.0.0.1:" + std::to_string(raw_server.port()) + "/protocol";
+  require(client.open(url) == 0, "client protocol test open starts");
+  loop.run_after(3s, [&] {
+    failed = true;
+    loop.quit();
+  });
+  loop.loop();
+
+  require(!failed, "client protocol close test did not fail");
+  require(handshake_sent, "raw websocket server sent protocol test handshake");
+  require(saw_protocol_error, "client reports protocol error");
+  require(saw_protocol_close, "client on_close sees protocol close code");
+}
+
+std::uint16_t close_code_from_payload(std::string_view payload) {
+  if (payload.size() < 2) {
+    return 1005;
+  }
+  return static_cast<std::uint16_t>(
+      (static_cast<unsigned char>(payload[0]) << 8) |
+      static_cast<unsigned char>(payload[1]));
 }
 
 #if OKLIB_ENABLE_TLS
@@ -48,6 +298,180 @@ TestCertificate make_test_certificate() {
   return certificate;
 }
 #endif
+
+void test_malformed_websocket_handshake_responses() {
+  oklib::net::EventLoop loop;
+  oklib::websocket::WebSocketServer server(&loop,
+                                           oklib::net::InetAddress::loopback(0),
+                                           "websocket-bad-handshake-server");
+  server.register_websocket_service({});
+  server.start();
+
+  std::vector<std::string> responses;
+  std::thread client([&] {
+    const auto address = server.listen_address();
+    responses.push_back(raw_request_once(
+        address,
+        "GET /ws HTTP/1.1\r\nHost: localhost\r\nUpgrade: websocket\r\n"
+        "Connection: Upgrade\r\nSec-WebSocket-Version: 13\r\n\r\n"));
+    responses.push_back(raw_request_once(
+        address,
+        websocket_upgrade_request("dGhlIHNhbXBsZSBub25jZQ==", "/ws", "12")));
+    responses.push_back(raw_request_once(
+        address,
+        "POST /ws HTTP/1.1\r\nHost: localhost\r\nUpgrade: websocket\r\n"
+        "Connection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n"
+        "Sec-WebSocket-Version: 13\r\n\r\n"));
+    loop.queue_in_loop([&] { loop.quit(); });
+  });
+  loop.run_after(std::chrono::seconds(3), [&] { loop.quit(); });
+  loop.loop();
+  client.join();
+
+  require(responses.size() == 3, "malformed handshake responses collected");
+  require(responses[0].find("HTTP/1.1 400 Bad Request") == 0,
+          "missing websocket key returns 400");
+  require(responses[1].find("HTTP/1.1 426 Upgrade Required") == 0,
+          "wrong websocket version returns 426");
+  require(responses[1].find("Sec-WebSocket-Version: 13\r\n") != std::string::npos,
+          "426 advertises supported websocket version");
+  require(responses[2].find("HTTP/1.1 400 Bad Request") == 0,
+          "non-GET websocket upgrade returns 400");
+}
+
+void test_raw_ping_pong_and_protocol_close() {
+  using namespace std::chrono_literals;
+
+  oklib::net::EventLoop loop;
+  oklib::websocket::WebSocketServer server(&loop,
+                                           oklib::net::InetAddress::loopback(0),
+                                           "websocket-raw-control-server");
+  std::vector<oklib::websocket::WebSocketCloseInfo> close_infos;
+  oklib::websocket::WebSocketService service;
+  service.on_close = [&](const oklib::websocket::WebSocketChannelPtr&,
+                         oklib::websocket::WebSocketCloseInfo info) {
+    close_infos.push_back(std::move(info));
+  };
+  server.register_websocket_service(std::move(service));
+  server.start();
+
+  bool ping_pong_ok = false;
+  bool close_echo_ok = false;
+  bool protocol_close_ok = false;
+  std::thread client([&] {
+    const auto address = server.listen_address();
+    {
+      int fd = ::socket(AF_INET, SOCK_STREAM, 0);
+      require(fd >= 0, "ping raw socket succeeds");
+      require(::connect(fd, address.sockaddr_ptr(), address.length()) == 0,
+              "ping raw connect succeeds");
+      const auto request = websocket_upgrade_request("dGhlIHNhbXBsZSBub25jZQ==");
+      require(::write(fd, request.data(), request.size()) == static_cast<ssize_t>(request.size()),
+              "ping upgrade write succeeds");
+      std::string response;
+      char buffer[512];
+      while (response.find("\r\n\r\n") == std::string::npos) {
+        const auto n = ::read(fd, buffer, sizeof(buffer));
+        require(n > 0, "ping upgrade response read succeeds");
+        response.append(buffer, static_cast<std::size_t>(n));
+      }
+      require(response.find("HTTP/1.1 101 Switching Protocols") == 0,
+              "raw ping client upgraded");
+
+      oklib::websocket::WebSocketFrame ping;
+      ping.opcode = oklib::websocket::WebSocketOpcode::ping;
+      ping.payload = "abc";
+      const std::string encoded_ping = oklib::websocket::encode_websocket_frame(
+          ping,
+          oklib::websocket::WebSocketMasking::masked,
+          std::array<unsigned char, 4>{1, 2, 3, 4});
+      require(::write(fd, encoded_ping.data(), encoded_ping.size()) ==
+                  static_cast<ssize_t>(encoded_ping.size()),
+              "masked ping write succeeds");
+      oklib::websocket::WebSocketFrame pong;
+      require(read_one_frame(fd, oklib::websocket::WebSocketEndpointRole::client, &pong),
+              "pong frame received");
+      ping_pong_ok = pong.opcode == oklib::websocket::WebSocketOpcode::pong &&
+                     pong.payload == "abc";
+
+      oklib::websocket::WebSocketFrame close;
+      close.opcode = oklib::websocket::WebSocketOpcode::close;
+      close.payload.push_back(static_cast<char>(1000 >> 8));
+      close.payload.push_back(static_cast<char>(1000 & 0xff));
+      close.payload.append("bye");
+      const std::string encoded_close = oklib::websocket::encode_websocket_frame(
+          close,
+          oklib::websocket::WebSocketMasking::masked,
+          std::array<unsigned char, 4>{4, 3, 2, 1});
+      require(::write(fd, encoded_close.data(), encoded_close.size()) ==
+                  static_cast<ssize_t>(encoded_close.size()),
+              "masked close write succeeds");
+      oklib::websocket::WebSocketFrame close_echo;
+      require(read_one_frame(fd, oklib::websocket::WebSocketEndpointRole::client, &close_echo),
+              "close echo frame received");
+      close_echo_ok = close_echo.opcode == oklib::websocket::WebSocketOpcode::close &&
+                      close_code_from_payload(close_echo.payload) == 1000;
+      ::close(fd);
+    }
+
+    {
+      int fd = ::socket(AF_INET, SOCK_STREAM, 0);
+      require(fd >= 0, "protocol raw socket succeeds");
+      require(::connect(fd, address.sockaddr_ptr(), address.length()) == 0,
+              "protocol raw connect succeeds");
+      const auto request = websocket_upgrade_request("x3JJHMbDL1EzLkh9GBhXDw==");
+      require(::write(fd, request.data(), request.size()) == static_cast<ssize_t>(request.size()),
+              "protocol upgrade write succeeds");
+      std::string response;
+      char buffer[512];
+      while (response.find("\r\n\r\n") == std::string::npos) {
+        const auto n = ::read(fd, buffer, sizeof(buffer));
+        require(n > 0, "protocol upgrade response read succeeds");
+        response.append(buffer, static_cast<std::size_t>(n));
+      }
+      oklib::websocket::WebSocketFrame unmasked_text;
+      unmasked_text.opcode = oklib::websocket::WebSocketOpcode::text;
+      unmasked_text.payload = "bad";
+      const std::string encoded_bad = oklib::websocket::encode_websocket_frame(
+          unmasked_text, oklib::websocket::WebSocketMasking::unmasked);
+      require(::write(fd, encoded_bad.data(), encoded_bad.size()) ==
+                  static_cast<ssize_t>(encoded_bad.size()),
+              "unmasked frame write succeeds");
+      oklib::websocket::WebSocketFrame protocol_close;
+      require(read_one_frame(fd, oklib::websocket::WebSocketEndpointRole::client, &protocol_close),
+              "protocol close frame received");
+      protocol_close_ok =
+          protocol_close.opcode == oklib::websocket::WebSocketOpcode::close &&
+          close_code_from_payload(protocol_close.payload) == 1002;
+      ::close(fd);
+    }
+
+    std::this_thread::sleep_for(20ms);
+    loop.queue_in_loop([&] { loop.quit(); });
+  });
+
+  loop.run_after(3s, [&] { loop.quit(); });
+  loop.loop();
+  client.join();
+
+  require(ping_pong_ok, "server automatically replies pong to masked ping");
+  require(close_echo_ok, "server echoes close frame");
+  const bool saw_normal_close = std::any_of(
+      close_infos.begin(),
+      close_infos.end(),
+      [](const oklib::websocket::WebSocketCloseInfo& info) {
+        return info.code == 1000 && info.reason == "bye";
+      });
+  const bool saw_protocol_close = std::any_of(
+      close_infos.begin(),
+      close_infos.end(),
+      [](const oklib::websocket::WebSocketCloseInfo& info) {
+        return info.code == 1002;
+      });
+  require(saw_normal_close, "server on_close sees normal close code and reason");
+  require(protocol_close_ok, "unmasked client frame closes with 1002");
+  require(saw_protocol_close, "server on_close sees protocol close code");
+}
 
 void test_websocket_server_client_echo_and_http() {
   using namespace std::chrono_literals;
@@ -260,6 +684,10 @@ void test_wss_client_server_round_trip() {
 }  // namespace
 
 int main() {
+  test_malformed_websocket_handshake_responses();
+  test_raw_ping_pong_and_protocol_close();
+  test_websocket_client_replies_to_ping();
+  test_websocket_client_reports_protocol_close();
   test_websocket_server_client_echo_and_http();
 #if OKLIB_ENABLE_TLS
   test_wss_client_server_round_trip();

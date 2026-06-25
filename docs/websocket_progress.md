@@ -3,7 +3,8 @@
 ## Current Phase
 
 - First WebSocket implementation complete.
-- Next optional hardening: broader malformed-handshake tests and ping/pong/close edge assertions.
+- Hardening pass 1 complete.
+- Next optional hardening: subprotocol edge cases, malformed client 101 responses, and stress/fuzz-style frame sequences.
 
 ## Completed Work
 
@@ -51,11 +52,19 @@
   - `wss://` local round trip under `OKLIB_ENABLE_TLS=ON`;
   - `permessage-deflate` negotiation and compressed echo under
     `OKLIB_ENABLE_WEBSOCKET_COMPRESSION=ON`.
+- Hardening pass 1:
+  - malformed server handshakes return 400 or 426 with `Sec-WebSocket-Version: 13`;
+  - server automatically replies pong to client ping;
+  - client automatically replies masked pong to server ping;
+  - normal close frames preserve code/reason in `on_close`;
+  - unmasked client frames close with 1002 and notify server `on_close`;
+  - masked server frames close with 1002 and notify client `on_close`.
 
 ## Incomplete / Follow-Up Work
 
-- Add deeper malformed-handshake integration tests for 400/426 paths.
-- Add explicit ping/pong and close-handshake integration assertions.
+- Add malformed client response tests, such as bad `Sec-WebSocket-Accept`.
+- Add subprotocol selector/response edge tests.
+- Add fragmented control-frame and RSV integration tests beyond codec-only coverage.
 - Consider a future blocking WebSocket client wrapper on top of the async client.
 
 ## Current Blockers
@@ -73,6 +82,13 @@
 - 2026-06-26: `cmake --build build-ws-zlib --parallel` passed.
 - 2026-06-26: `ctest --test-dir build-ws-zlib --output-on-failure` passed, 18/18 tests,
   including `permessage-deflate` negotiation and compressed echo.
+- 2026-06-26: `oklib.websocket.integration` passed after hardening pass 1.
+- 2026-06-26: `cmake --build build --parallel` passed after hardening pass 1.
+- 2026-06-26: `ctest --test-dir build --output-on-failure` passed, 18/18 tests after hardening pass 1.
+- 2026-06-26: `cmake --build build-tls --parallel` passed after hardening pass 1.
+- 2026-06-26: `ctest --test-dir build-tls --output-on-failure` passed, 19/19 tests after hardening pass 1.
+- 2026-06-26: `cmake --build build-ws-zlib --parallel` passed after hardening pass 1.
+- 2026-06-26: `ctest --test-dir build-ws-zlib --output-on-failure` passed, 18/18 tests after hardening pass 1.
 
 ## Latest Commit / Push
 
@@ -81,4 +97,4 @@
 
 ## Next Step
 
-- Commit/push this branch, then decide whether to merge to `main` or add malformed-handshake hardening first.
+- Decide whether to merge to `main`, or continue with subprotocol/malformed-client-response tests.

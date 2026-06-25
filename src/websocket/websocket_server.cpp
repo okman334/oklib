@@ -228,6 +228,17 @@ void notify_close(const WebSocketService& service,
   }
 }
 
+void close_for_error(const WebSocketService& service,
+                     const oklib::net::TcpConnectionPtr& connection,
+                     ServerConnectionContext* context,
+                     WebSocketError error,
+                     std::string reason) {
+  const auto code = close_code_for_error(error);
+  notify_error(service, context->channel, error);
+  context->channel->close(code, reason);
+  notify_close(service, connection, context, WebSocketCloseInfo{code, std::move(reason)});
+}
+
 }  // namespace
 
 WebSocketServer::WebSocketServer(oklib::net::EventLoop* loop,
@@ -564,8 +575,7 @@ void WebSocketServer::on_websocket_message(const oklib::net::TcpConnectionPtr& c
   const auto parse_status = context->frame_parser.parse(buffer, &frames);
   if (parse_status == WebSocketParseStatus::error) {
     const auto error = context->frame_parser.error();
-    notify_error(websocket_service_, context->channel, error);
-    context->channel->close(close_code_for_error(error), "protocol error");
+    close_for_error(websocket_service_, connection, context, error, "protocol error");
     return;
   }
 
@@ -574,8 +584,7 @@ void WebSocketServer::on_websocket_message(const oklib::net::TcpConnectionPtr& c
     const auto message_status = context->message_assembler.consume(frame, &message);
     if (message_status == WebSocketMessageStatus::error) {
       const auto error = context->message_assembler.error();
-      notify_error(websocket_service_, context->channel, error);
-      context->channel->close(close_code_for_error(error), "protocol error");
+      close_for_error(websocket_service_, connection, context, error, "protocol error");
       return;
     }
 
@@ -591,8 +600,11 @@ void WebSocketServer::on_websocket_message(const oklib::net::TcpConnectionPtr& c
         bool ok = false;
         WebSocketCloseInfo info = close_info_from_payload(frame.payload, &ok);
         if (!ok) {
-          notify_error(websocket_service_, context->channel, WebSocketError::protocol_error);
-          context->channel->close(1002, "bad close frame");
+          close_for_error(websocket_service_,
+                          connection,
+                          context,
+                          WebSocketError::protocol_error,
+                          "bad close frame");
           return;
         }
         context->channel->mark_close_received();
@@ -613,14 +625,20 @@ void WebSocketServer::on_websocket_message(const oklib::net::TcpConnectionPtr& c
     if (message.compressed) {
       std::string inflated;
       if (!context->compression_enabled || !websocket_inflate(message.payload, &inflated)) {
-        notify_error(websocket_service_, context->channel, WebSocketError::compression_error);
-        context->channel->close(1002, "compression error");
+        close_for_error(websocket_service_,
+                        connection,
+                        context,
+                        WebSocketError::compression_error,
+                        "compression error");
         return;
       }
       message.payload = std::move(inflated);
       if (message.opcode == WebSocketOpcode::text && !valid_utf8(message.payload)) {
-        notify_error(websocket_service_, context->channel, WebSocketError::invalid_utf8);
-        context->channel->close(1007, "invalid utf-8");
+        close_for_error(websocket_service_,
+                        connection,
+                        context,
+                        WebSocketError::invalid_utf8,
+                        "invalid utf-8");
         return;
       }
     }
