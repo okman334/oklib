@@ -72,7 +72,7 @@
   - Buffered GET/HEAD now supports fresh cache hits, stale ETag/Last-Modified revalidation, `304` body reuse, Vary matching, `no-store`, and body-size exclusion.
   - Added `oklib.http.client_cache` integration coverage.
   - Commit: `798565e`.
-  - Push: pending.
+  - Push: `origin/codex/http11-compliance`.
 
 ## Incomplete Phases
 
