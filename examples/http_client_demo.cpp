@@ -86,6 +86,11 @@ std::vector<oklib::http::HttpClientRequest> make_requests() {
   post.set_body("hello from oklib HttpClient\n");
   requests.push_back(std::move(post));
 
+  oklib::http::HttpClientRequest upload("POST", "/upload-file?name=client-demo.jpg");
+  upload.set_header("Content-Type", "image/jpeg");
+  upload.set_body("\xff\xd8\xff\xe0oklib-client-demo-jpg\xff\xd9");
+  requests.push_back(std::move(upload));
+
   requests.emplace_back("GET", "/cache");
   requests.emplace_back("GET", "/cache");
   requests.emplace_back("GET", "/async?task=demo");

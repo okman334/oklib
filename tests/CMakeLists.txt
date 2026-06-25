@@ -63,3 +63,8 @@ add_test(
   COMMAND ${CMAKE_COMMAND}
           -DPROJECT_SOURCE_DIR=${PROJECT_SOURCE_DIR}
           -P ${CMAKE_CURRENT_SOURCE_DIR}/examples/verify_tcp_echo_server_logging.cmake)
+
+add_executable(oklib_http_demo_routes_test examples/http_demo_routes_test.cpp)
+target_include_directories(oklib_http_demo_routes_test PRIVATE ${PROJECT_SOURCE_DIR}/examples)
+target_link_libraries(oklib_http_demo_routes_test PRIVATE oklib::http)
+add_test(NAME oklib.example.http_demo_routes COMMAND oklib_http_demo_routes_test)

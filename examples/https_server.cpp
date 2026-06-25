@@ -70,7 +70,10 @@ int main(int argc, char** argv) {
   server.start();
 
   std::cout << "oklib HTTPS demo server listening on "
-            << server.listen_address().to_ip_port() << '\n';
+            << server.listen_address().to_ip_port() << '\n'
+            << "upload raw jpg bytes with:\n"
+            << "  curl -k -H 'Content-Type: image/jpeg' --data-binary @photo.jpg "
+            << "https://127.0.0.1:" << port << "/upload-file?name=photo.jpg\n";
   loop.loop();
   return 0;
 }

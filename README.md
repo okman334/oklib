@@ -75,6 +75,28 @@ router.post_streaming("/upload",
 server.set_router(router);
 ```
 
+Build TLS support and run the HTTPS demo server with a local self-signed
+certificate:
+
+```sh
+cmake -S . -B build-tls -DOKLIB_ENABLE_TLS=ON
+cmake --build build-tls
+openssl req -x509 -newkey rsa:2048 -nodes \
+  -keyout /tmp/oklib-demo.key \
+  -out /tmp/oklib-demo.crt \
+  -subj /CN=localhost -days 1
+./build-tls/examples/oklib_https_server /tmp/oklib-demo.crt /tmp/oklib-demo.key 8443
+```
+
+The full HTTP/HTTPS demo routes include raw file upload. This saves the request
+body to `uploads/photo.jpg` relative to the server process working directory:
+
+```sh
+curl -k -H 'Content-Type: image/jpeg' \
+  --data-binary @photo.jpg \
+  'https://127.0.0.1:8443/upload-file?name=photo.jpg'
+```
+
 For large responses, stream HTTP/1.1 chunks instead of building one large body:
 
 ```cpp

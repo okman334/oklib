@@ -4,6 +4,7 @@ build-release/
 cmake-build-*/
 .idea/
 .cache/
+uploads/
 .DS_Store
 *.o
 *.a
