@@ -170,45 +170,59 @@ void test_vary_mismatch_uses_network_and_matching_vary_hits_cache() {
 }
 
 void test_no_store_and_body_limit_are_not_cached() {
-  oklib::http::HttpClientCacheOptions options;
-  options.max_body_bytes = 4;
-  CacheClientCase fixture("http-client-cache-limits", options);
-  int requests = 0;
-  fixture.server.set_http_callback([&](const oklib::http::HttpRequest& request,
-                                       oklib::http::HttpResponse* response) {
-    ++requests;
-    response->set_status_code(oklib::http::HttpStatusCode::ok);
-    response->add_header("Cache-Control", request.path() == "/no-store" ? "no-store" : "max-age=60");
-    response->set_body(request.path() == "/no-store" ? "no-store-body" : "too-large");
-  });
-  fixture.server.start();
+  {
+    CacheClientCase fixture("http-client-cache-no-store");
+    int requests = 0;
+    fixture.server.set_http_callback([&](const oklib::http::HttpRequest&,
+                                         oklib::http::HttpResponse* response) {
+      ++requests;
+      response->set_status_code(oklib::http::HttpStatusCode::ok);
+      response->add_header("Cache-Control", "no-store");
+      response->set_body("no-store-body");
+    });
+    fixture.server.start();
 
-  fixture.client.send(oklib::http::HttpClientRequest("GET", "/no-store"));
-  fixture.on_response = [&](std::size_t count) {
-    if (count == 1) {
-      fixture.client.send(oklib::http::HttpClientRequest("GET", "/no-store"));
-    }
-  };
-  fixture.run_for();
+    fixture.client.send(oklib::http::HttpClientRequest("GET", "/no-store"));
+    fixture.on_response = [&](std::size_t count) {
+      if (count == 1) {
+        fixture.client.send(oklib::http::HttpClientRequest("GET", "/no-store"));
+      }
+    };
+    fixture.run_for();
 
-  require(fixture.responses.size() == 2, "no-store case returns two responses");
-  require(requests == 2, "no-store responses are not cached");
-  require(fixture.responses[1].source == oklib::http::HttpClientResponseSource::network,
-          "no-store second response is network");
+    require(fixture.responses.size() == 2, "no-store case returns two responses");
+    require(requests == 2, "no-store responses are not cached");
+    require(fixture.responses[1].source == oklib::http::HttpClientResponseSource::network,
+            "no-store second response is network");
+  }
 
-  fixture.responses.clear();
-  fixture.on_response = [&](std::size_t count) {
-    if (count == 1) {
-      fixture.client.send(oklib::http::HttpClientRequest("GET", "/large"));
-    }
-  };
-  fixture.client.send(oklib::http::HttpClientRequest("GET", "/large"));
-  fixture.run_for();
+  {
+    oklib::http::HttpClientCacheOptions options;
+    options.max_body_bytes = 4;
+    CacheClientCase fixture("http-client-cache-body-limit", options);
+    int requests = 0;
+    fixture.server.set_http_callback([&](const oklib::http::HttpRequest&,
+                                         oklib::http::HttpResponse* response) {
+      ++requests;
+      response->set_status_code(oklib::http::HttpStatusCode::ok);
+      response->add_header("Cache-Control", "max-age=60");
+      response->set_body("too-large");
+    });
+    fixture.server.start();
 
-  require(fixture.responses.size() == 2, "body limit case returns two responses");
-  require(requests == 4, "oversized responses are not cached");
-  require(fixture.responses[1].source == oklib::http::HttpClientResponseSource::network,
-          "oversized second response is network");
+    fixture.client.send(oklib::http::HttpClientRequest("GET", "/large"));
+    fixture.on_response = [&](std::size_t count) {
+      if (count == 1) {
+        fixture.client.send(oklib::http::HttpClientRequest("GET", "/large"));
+      }
+    };
+    fixture.run_for();
+
+    require(fixture.responses.size() == 2, "body limit case returns two responses");
+    require(requests == 2, "oversized responses are not cached");
+    require(fixture.responses[1].source == oklib::http::HttpClientResponseSource::network,
+            "oversized second response is network");
+  }
 }
 
 }  // namespace
