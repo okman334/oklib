@@ -1,7 +1,10 @@
 #pragma once
 
+#include <cstddef>
+#include <cstdint>
 #include <deque>
 #include <functional>
+#include <memory>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -32,7 +35,7 @@ class HttpClientRequest {
   void add_header(std::string_view field, std::string_view value) { headers_.add(field, value); }
   void set_header(std::string_view field, std::string_view value) { headers_.set(field, value); }
 
-  [[nodiscard]] std::string serialize(std::string_view host) const;
+  [[nodiscard]] std::string serialize(std::string_view host, bool include_body = true) const;
 
  private:
   std::string method_;
@@ -41,9 +44,31 @@ class HttpClientRequest {
   std::string body_;
 };
 
+class HttpClientResponseStream {
+ public:
+  using DataCallback = std::function<void(std::string_view)>;
+  using CompleteCallback = std::function<void()>;
+
+  HttpClientResponseStream();
+
+  void set_data_callback(DataCallback callback) const;
+  void set_complete_callback(CompleteCallback callback) const;
+
+ private:
+  struct State;
+  friend class HttpClient;
+
+  void on_data(std::string_view chunk) const;
+  void on_complete() const;
+
+  std::shared_ptr<State> state_;
+};
+
 class HttpClient : private oklib::Noncopyable {
  public:
   using ResponseCallback = std::function<void(HttpResponseMessage)>;
+  using StreamingResponseCallback =
+      std::function<void(HttpResponseMessage, HttpClientResponseStream)>;
   using ErrorCallback = std::function<void()>;
 
   HttpClient(oklib::net::EventLoop* loop,
@@ -59,9 +84,25 @@ class HttpClient : private oklib::Noncopyable {
   void send(HttpClientRequest request);
 
   void set_response_callback(ResponseCallback callback) { response_callback_ = std::move(callback); }
+  void set_streaming_response_callback(StreamingResponseCallback callback) {
+    streaming_response_callback_ = std::move(callback);
+  }
   void set_error_callback(ErrorCallback callback) { error_callback_ = std::move(callback); }
 
  private:
+  enum class StreamingBodyMode {
+    none,
+    fixed_length,
+    chunked,
+  };
+
+  enum class StreamingChunkState {
+    size,
+    data,
+    data_crlf,
+    trailers,
+  };
+
   void on_connection(const oklib::net::TcpConnectionPtr& connection);
   void on_message(const oklib::net::TcpConnectionPtr& connection,
                   oklib::net::Buffer* buffer,
@@ -69,6 +110,11 @@ class HttpClient : private oklib::Noncopyable {
   void send_in_loop(HttpClientRequest request);
   void request_connect();
   void flush_requests();
+  void handle_continue_response();
+  HttpParseStatus process_streaming_body(oklib::net::Buffer* buffer);
+  HttpParseStatus process_fixed_streaming_body(oklib::net::Buffer* buffer);
+  HttpParseStatus process_chunked_streaming_body(oklib::net::Buffer* buffer);
+  void finish_streaming_response();
   void handle_parse_error();
   [[nodiscard]] bool response_closes_connection(const HttpResponseMessage& response) const;
 
@@ -76,11 +122,21 @@ class HttpClient : private oklib::Noncopyable {
   std::string host_;
   oklib::net::TcpClient client_;
   ResponseCallback response_callback_;
+  StreamingResponseCallback streaming_response_callback_;
   ErrorCallback error_callback_;
   HttpParser parser_{HttpParserMode::response};
   oklib::net::TcpConnectionPtr connection_;
   std::deque<HttpClientRequest> pending_requests_;
   std::deque<HttpClientRequest> in_flight_requests_;
+  HttpClientResponseStream response_stream_;
+  StreamingBodyMode streaming_body_mode_{StreamingBodyMode::none};
+  StreamingChunkState streaming_chunk_state_{StreamingChunkState::size};
+  std::uint64_t streaming_body_remaining_{0};
+  std::uint64_t streaming_decoded_body_bytes_{0};
+  std::size_t streaming_trailer_bytes_{0};
+  bool streaming_response_active_{false};
+  bool streaming_response_close_{false};
+  bool awaiting_continue_{false};
   bool connecting_{false};
   bool stopped_{false};
 };

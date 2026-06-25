@@ -107,6 +107,31 @@ request.add_header("Accept", "application/json");
 client.send(std::move(request));
 ```
 
+For large responses, use streaming callbacks:
+
+```cpp
+client.set_streaming_response_callback(
+    [](oklib::http::HttpResponseMessage response,
+       oklib::http::HttpClientResponseStream stream) {
+      stream.set_data_callback([](std::string_view chunk) {
+        // Process or copy the chunk before returning.
+      });
+      stream.set_complete_callback([] {
+        OKLIB_LOG_INFO << "response stream complete";
+      });
+    });
+```
+
+Requests with `Expect: 100-continue` send headers first and only send the body
+after the peer replies with `100 Continue`:
+
+```cpp
+oklib::http::HttpClientRequest upload("POST", "/v1/upload");
+upload.add_header("Expect", "100-continue");
+upload.set_body(payload);
+client.send(std::move(upload));
+```
+
 Run the TCP echo examples:
 
 ```sh
