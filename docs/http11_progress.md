@@ -50,7 +50,7 @@
   - Added `HttpServer::set_allowed_methods(...)` and automatic `OPTIONS *` handling with `Allow`.
   - Verified CONNECT, TRACE, and Upgrade requests/headers are exposed to application callbacks by default.
   - Commit: `a89114f`.
-  - Push: pending.
+  - Push: `origin/codex/http11-compliance`.
 
 ## Incomplete Phases
 
