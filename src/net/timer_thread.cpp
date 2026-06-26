@@ -41,34 +41,30 @@ void TimerThread::stop() {
 }
 
 TimerId TimerThread::schedule(std::chrono::milliseconds delay,
-                              std::chrono::milliseconds interval,
+                              std::uint32_t repeat,
                               TimerCallback callback) {
+  return schedule(delay, repeat, std::move(callback), {});
+}
+
+TimerId TimerThread::schedule(std::chrono::milliseconds delay,
+                              std::uint32_t repeat,
+                              TimerCallback callback,
+                              TimerId timer_id) {
   std::lock_guard lock(mutex_);
   EventLoop* loop = loop_;
   if (loop == nullptr || !callback) {
     return {};
   }
 
-  auto timer_id = std::make_shared<TimerId>();
-  auto wrapped = [timer_id, callback = std::move(callback)] {
-    callback(*timer_id);
-  };
-
   if (loop->is_in_loop_thread()) {
-    *timer_id = interval == std::chrono::milliseconds::zero()
-                    ? loop->run_after(delay, std::move(wrapped))
-                    : loop->run_every(interval, std::move(wrapped));
-    return *timer_id;
+    return loop->set_timer(delay, std::move(callback), repeat, timer_id);
   }
 
   auto ready = std::make_shared<std::promise<TimerId>>();
   auto future = ready->get_future();
-  loop->run_in_loop([loop, timer_id, delay, interval, callback = std::move(wrapped),
+  loop->run_in_loop([loop, delay, repeat, timer_id, callback = std::move(callback),
                      ready]() mutable {
-    *timer_id = interval == std::chrono::milliseconds::zero()
-                    ? loop->run_after(delay, std::move(callback))
-                    : loop->run_every(interval, std::move(callback));
-    ready->set_value(*timer_id);
+    ready->set_value(loop->set_timer(delay, std::move(callback), repeat, timer_id));
   });
   return future.get();
 }

@@ -2,11 +2,13 @@
 
 #include <atomic>
 #include <chrono>
+#include <cstdint>
 #include <functional>
+#include <limits>
 #include <memory>
 #include <mutex>
 #include <thread>
-#include <unordered_set>
+#include <unordered_map>
 #include <vector>
 
 #include "oklib/base/noncopyable.h"
@@ -22,7 +24,9 @@ class EventLoop : private oklib::Noncopyable {
  public:
   using Functor = std::function<void()>;
   using TimerCallback = std::function<void()>;
+  using TimerIdCallback = std::function<void(TimerId)>;
   using Clock = std::chrono::steady_clock;
+  static constexpr std::uint32_t k_infinite_repeats = std::numeric_limits<std::uint32_t>::max();
 
   EventLoop();
   ~EventLoop();
@@ -36,17 +40,88 @@ class EventLoop : private oklib::Noncopyable {
 
   template <typename Rep, typename Period>
   TimerId run_after(std::chrono::duration<Rep, Period> delay, TimerCallback callback) {
+    auto wrapped = [callback = std::move(callback)](TimerId) {
+      if (callback) {
+        callback();
+      }
+    };
     return add_timer(Clock::now() + std::chrono::duration_cast<Clock::duration>(delay),
-                     Clock::duration::zero(), std::move(callback));
+                     Clock::duration::zero(), 1, std::move(wrapped));
   }
 
   template <typename Rep, typename Period>
   TimerId run_every(std::chrono::duration<Rep, Period> interval, TimerCallback callback) {
     const auto cast_interval = std::chrono::duration_cast<Clock::duration>(interval);
-    return add_timer(Clock::now() + cast_interval, cast_interval, std::move(callback));
+    if (cast_interval <= Clock::duration::zero()) {
+      return {};
+    }
+    auto wrapped = [callback = std::move(callback)](TimerId) {
+      if (callback) {
+        callback();
+      }
+    };
+    return add_timer(Clock::now() + cast_interval, cast_interval, k_infinite_repeats, std::move(wrapped));
+  }
+
+  template <typename Rep, typename Period>
+  TimerId set_timer(std::chrono::duration<Rep, Period> timeout,
+                    TimerIdCallback callback,
+                    std::uint32_t repeat = k_infinite_repeats,
+                    TimerId timer_id = {}) {
+    const auto cast_timeout = std::chrono::duration_cast<Clock::duration>(timeout);
+    if (cast_timeout < Clock::duration::zero() || repeat == 0) {
+      return {};
+    }
+    return add_timer(Clock::now() + cast_timeout, cast_timeout, repeat, std::move(callback), timer_id);
+  }
+
+  template <typename Rep, typename Period>
+  TimerId set_timer(std::chrono::duration<Rep, Period> timeout,
+                    TimerIdCallback callback,
+                    std::uint32_t repeat,
+                    std::uint64_t timer_id) {
+    return set_timer(timeout, std::move(callback), repeat, TimerId(timer_id));
+  }
+
+  template <typename Rep, typename Period>
+  TimerId set_timer_in_loop(std::chrono::duration<Rep, Period> timeout,
+                            TimerIdCallback callback,
+                            std::uint32_t repeat = k_infinite_repeats,
+                            TimerId timer_id = {}) {
+    return set_timer(timeout, std::move(callback), repeat, timer_id);
+  }
+
+  template <typename Rep, typename Period>
+  TimerId set_timeout(std::chrono::duration<Rep, Period> timeout,
+                      TimerIdCallback callback,
+                      TimerId timer_id = {}) {
+    return set_timer(timeout, std::move(callback), 1, timer_id);
+  }
+
+  template <typename Rep, typename Period>
+  TimerId set_timeout(std::uint64_t timer_id,
+                      std::chrono::duration<Rep, Period> timeout,
+                      TimerIdCallback callback) {
+    return set_timeout(timeout, std::move(callback), TimerId(timer_id));
+  }
+
+  template <typename Rep, typename Period>
+  TimerId set_interval(std::chrono::duration<Rep, Period> interval,
+                       TimerIdCallback callback,
+                       TimerId timer_id = {}) {
+    return set_timer(interval, std::move(callback), k_infinite_repeats, timer_id);
+  }
+
+  template <typename Rep, typename Period>
+  TimerId set_interval(std::uint64_t timer_id,
+                       std::chrono::duration<Rep, Period> interval,
+                       TimerIdCallback callback) {
+    return set_interval(interval, std::move(callback), TimerId(timer_id));
   }
 
   void cancel(TimerId timer_id);
+  void kill_timer(TimerId timer_id) { cancel(timer_id); }
+  void kill_timer(std::uint64_t timer_id) { cancel(TimerId(timer_id)); }
 
   void update_channel(Channel* channel);
   void remove_channel(Channel* channel);
@@ -65,12 +140,20 @@ class EventLoop : private oklib::Noncopyable {
  private:
   struct Timer {
     TimerId id;
+    uint64_t generation;
     Clock::time_point when;
     Clock::duration interval;
-    TimerCallback callback;
+    std::uint32_t repeat;
+    TimerIdCallback callback;
   };
 
-  TimerId add_timer(Clock::time_point when, Clock::duration interval, TimerCallback callback);
+  TimerId add_timer(Clock::time_point when,
+                    Clock::duration interval,
+                    std::uint32_t repeat,
+                    TimerIdCallback callback,
+                    TimerId timer_id = {});
+  [[nodiscard]] bool timer_is_current_locked(const Timer& timer) const;
+  TimerId next_timer_id_locked();
   int poll_timeout_ms() const;
   void run_due_timers();
   void handle_wakeup(oklib::Timestamp);
@@ -94,8 +177,9 @@ class EventLoop : private oklib::Noncopyable {
 
   mutable std::mutex timer_mutex_;
   std::vector<Timer> timers_;
-  std::unordered_set<uint64_t> canceled_timers_;
+  std::unordered_map<uint64_t, uint64_t> timer_generations_;
   uint64_t next_timer_id_{1};
+  uint64_t next_timer_generation_{1};
 };
 
 }  // namespace oklib::net

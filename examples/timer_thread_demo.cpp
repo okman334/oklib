@@ -11,12 +11,12 @@ int main() {
   oklib::net::TimerThread timer("demo-timer");
   std::atomic<int> ticks{0};
 
-  timer.set_timeout(500ms, [](oklib::net::TimerId id) {
+  timer.set_timeout(1001, 500ms, [](oklib::net::TimerId id) {
     std::cout << "timeout fired, id=" << id.value() << '\n';
   });
 
   oklib::net::TimerId interval;
-  interval = timer.set_interval(300ms, [&](oklib::net::TimerId id) {
+  interval = timer.set_interval(2001, 300ms, [&](oklib::net::TimerId id) {
     const int count = ticks.fetch_add(1) + 1;
     std::cout << "interval tick " << count << ", id=" << id.value() << '\n';
     if (count == 5) {

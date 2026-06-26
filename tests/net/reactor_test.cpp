@@ -61,6 +61,51 @@ int main() {
   }
 
   {
+    std::atomic<int> fired{0};
+    oklib::net::EventLoop loop;
+    const oklib::net::TimerId custom_id(1234);
+    const auto returned = loop.set_timer(10ms, [&](oklib::net::TimerId timer_id) {
+      require(timer_id == custom_id, "set_timer callback receives custom timer id");
+      fired.fetch_add(1, std::memory_order_relaxed);
+      loop.quit();
+    }, 1, custom_id);
+    require(returned == custom_id, "set_timer returns custom timer id");
+    loop.loop();
+    require(fired.load(std::memory_order_relaxed) == 1, "set_timer fires custom timer once");
+  }
+
+  {
+    std::atomic<int> first{0};
+    std::atomic<int> second{0};
+    oklib::net::EventLoop loop;
+    const oklib::net::TimerId custom_id(5678);
+    loop.set_timer(10ms, [&](oklib::net::TimerId) {
+      first.fetch_add(1, std::memory_order_relaxed);
+    }, 1, custom_id);
+    loop.set_timer(30ms, [&](oklib::net::TimerId timer_id) {
+      require(timer_id == custom_id, "replacement timer receives custom timer id");
+      second.fetch_add(1, std::memory_order_relaxed);
+    }, 1, custom_id);
+    loop.run_after(80ms, [&] { loop.quit(); });
+    loop.loop();
+    require(first.load(std::memory_order_relaxed) == 0, "custom timer id replacement cancels old timer");
+    require(second.load(std::memory_order_relaxed) == 1, "custom timer id replacement keeps new timer");
+  }
+
+  {
+    std::atomic<int> fired{0};
+    oklib::net::EventLoop loop;
+    const oklib::net::TimerId custom_id(42);
+    loop.set_timer(10ms, [&](oklib::net::TimerId timer_id) {
+      require(timer_id == custom_id, "finite repeat callback receives custom timer id");
+      fired.fetch_add(1, std::memory_order_relaxed);
+    }, 3, custom_id);
+    loop.run_after(80ms, [&] { loop.quit(); });
+    loop.loop();
+    require(fired.load(std::memory_order_relaxed) == 3, "set_timer finite repeat count is honored");
+  }
+
+  {
     int fds[2]{-1, -1};
     require(::socketpair(AF_UNIX, SOCK_STREAM, 0, fds) == 0, "socketpair succeeds");
 

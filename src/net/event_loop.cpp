@@ -6,6 +6,7 @@
 #include <cstring>
 #include <fcntl.h>
 #include <mutex>
+#include <optional>
 #include <stdexcept>
 #include <system_error>
 #include <unistd.h>
@@ -124,7 +125,7 @@ void EventLoop::cancel(TimerId timer_id) {
   }
   {
     std::lock_guard lock(timer_mutex_);
-    canceled_timers_.insert(timer_id.value());
+    timer_generations_.erase(timer_id.value());
   }
   wakeup();
 }
@@ -158,34 +159,68 @@ void EventLoop::wakeup() {
   }
 }
 
-TimerId EventLoop::add_timer(Clock::time_point when, Clock::duration interval, TimerCallback callback) {
-  TimerId id;
+TimerId EventLoop::add_timer(Clock::time_point when,
+                             Clock::duration interval,
+                             std::uint32_t repeat,
+                             TimerIdCallback callback,
+                             TimerId timer_id) {
+  if (!callback || repeat == 0) {
+    return {};
+  }
+
+  TimerId id = timer_id;
   {
     std::lock_guard lock(timer_mutex_);
-    id = TimerId(next_timer_id_++);
-    timers_.push_back(Timer{id, when, interval, std::move(callback)});
+    if (!id.valid()) {
+      id = next_timer_id_locked();
+    } else {
+      std::erase_if(timers_, [id](const Timer& timer) {
+        return timer.id == id;
+      });
+    }
+    uint64_t generation = next_timer_generation_++;
+    if (generation == 0) {
+      generation = next_timer_generation_++;
+    }
+    timer_generations_[id.value()] = generation;
+    timers_.push_back(Timer{id, generation, when, interval, repeat, std::move(callback)});
   }
   wakeup();
   return id;
 }
 
+bool EventLoop::timer_is_current_locked(const Timer& timer) const {
+  const auto it = timer_generations_.find(timer.id.value());
+  return it != timer_generations_.end() && it->second == timer.generation;
+}
+
+TimerId EventLoop::next_timer_id_locked() {
+  TimerId id;
+  do {
+    id = TimerId(next_timer_id_++);
+  } while (!id.valid() || timer_generations_.contains(id.value()));
+  return id;
+}
+
 int EventLoop::poll_timeout_ms() const {
   std::lock_guard lock(timer_mutex_);
-  if (timers_.empty()) {
-    return k_default_poll_timeout_ms;
-  }
-
   const auto now = Clock::now();
-  auto next = timers_.front().when;
+  std::optional<Clock::time_point> next;
   for (const auto& timer : timers_) {
-    if (timer.when < next) {
+    if (!timer_is_current_locked(timer)) {
+      continue;
+    }
+    if (!next.has_value() || timer.when < *next) {
       next = timer.when;
     }
   }
-  if (next <= now) {
+  if (!next.has_value()) {
+    return k_default_poll_timeout_ms;
+  }
+  if (*next <= now) {
     return 0;
   }
-  const auto millis = std::chrono::duration_cast<std::chrono::milliseconds>(next - now).count();
+  const auto millis = std::chrono::duration_cast<std::chrono::milliseconds>(*next - now).count();
   return static_cast<int>(std::min<int64_t>(millis, k_default_poll_timeout_ms));
 }
 
@@ -198,9 +233,10 @@ void EventLoop::run_due_timers() {
     std::vector<Timer> pending;
     pending.reserve(timers_.size());
     for (auto& timer : timers_) {
-      if (canceled_timers_.contains(timer.id.value())) {
-        canceled_timers_.erase(timer.id.value());
-      } else if (timer.when <= now) {
+      if (!timer_is_current_locked(timer)) {
+        continue;
+      }
+      if (timer.when <= now) {
         expired.push_back(std::move(timer));
       } else {
         pending.push_back(std::move(timer));
@@ -210,15 +246,20 @@ void EventLoop::run_due_timers() {
   }
 
   for (auto& timer : expired) {
-    timer.callback();
-    if (timer.interval != Clock::duration::zero()) {
-      std::lock_guard lock(timer_mutex_);
-      if (!canceled_timers_.contains(timer.id.value())) {
+    timer.callback(timer.id);
+    std::lock_guard lock(timer_mutex_);
+    if (!timer_is_current_locked(timer)) {
+      continue;
+    }
+    if (timer.repeat != k_infinite_repeats) {
+      --timer.repeat;
+    }
+    if (timer.interval != Clock::duration::zero() &&
+        (timer.repeat == k_infinite_repeats || timer.repeat > 0)) {
         timer.when = Clock::now() + timer.interval;
         timers_.push_back(std::move(timer));
-      } else {
-        canceled_timers_.erase(timer.id.value());
-      }
+    } else {
+      timer_generations_.erase(timer.id.value());
     }
   }
 }

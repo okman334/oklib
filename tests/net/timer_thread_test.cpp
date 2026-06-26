@@ -62,6 +62,22 @@ int main() {
   }
 
   {
+    oklib::net::TimerThread timer("custom-id-timer-test");
+    std::atomic<int> fired{0};
+    const oklib::net::TimerId custom_id(9001);
+    const auto returned = timer.set_interval(custom_id, 15ms, [&](oklib::net::TimerId callback_id) {
+      require(callback_id == custom_id, "TimerThread callback receives custom timer id");
+      const int count = fired.fetch_add(1, std::memory_order_relaxed) + 1;
+      if (count == 2) {
+        timer.clear(callback_id);
+      }
+    });
+    require(returned == custom_id, "TimerThread returns custom timer id");
+    std::this_thread::sleep_for(100ms);
+    require(fired.load(std::memory_order_relaxed) == 2, "TimerThread custom timer id can be cleared");
+  }
+
+  {
     std::atomic<int> fired{0};
     auto id = oklib::net::GlobalTimer::set_timeout(20ms, [&](oklib::net::TimerId callback_id) {
       require(callback_id.valid(), "global timeout callback receives timer id");
