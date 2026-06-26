@@ -11,6 +11,7 @@
 #include "oklib/net/buffer.h"
 #include "oklib/net/callbacks.h"
 #include "oklib/net/inet_address.h"
+#include "oklib/net/tls_options.h"
 
 namespace oklib::net {
 
@@ -31,6 +32,8 @@ class TcpConnection : private oklib::Noncopyable, public std::enable_shared_from
   [[nodiscard]] const InetAddress& peer_address() const noexcept { return peer_address_; }
   [[nodiscard]] bool connected() const noexcept;
   [[nodiscard]] bool disconnected() const noexcept;
+  [[nodiscard]] bool tls_enabled() const noexcept;
+  [[nodiscard]] bool tls_established() const noexcept;
 
   void send(std::string_view message);
   void send(const void* data, std::size_t len);
@@ -55,11 +58,14 @@ class TcpConnection : private oklib::Noncopyable, public std::enable_shared_from
     high_water_mark_ = mark;
   }
   void set_close_callback(CloseCallback callback) { close_callback_ = std::move(callback); }
+  void enable_client_tls(TlsClientOptions options, std::string server_name);
+  void enable_server_tls(TlsServerOptions options);
 
   void connect_established();
   void connect_destroyed();
 
  private:
+  struct TlsContext;
   enum class State { disconnected, connecting, connected, disconnecting };
 
   void handle_read(oklib::Timestamp receive_time);
@@ -70,6 +76,10 @@ class TcpConnection : private oklib::Noncopyable, public std::enable_shared_from
   void send_in_loop(const void* data, std::size_t len);
   void send_raw_in_loop(std::string message);
   void send_raw_in_loop(const void* data, std::size_t len);
+  void start_tls_handshake(oklib::Timestamp receive_time);
+  void process_tls(oklib::Timestamp receive_time);
+  bool flush_tls_pending_output();
+  void fail_tls(const std::string& error);
   void shutdown_in_loop();
   void force_close_in_loop();
   void start_read_in_loop();
@@ -93,6 +103,7 @@ class TcpConnection : private oklib::Noncopyable, public std::enable_shared_from
   std::size_t high_water_mark_{64 * 1024 * 1024};
   Buffer input_buffer_;
   Buffer output_buffer_;
+  std::unique_ptr<TlsContext> tls_;
   std::any context_;
 };
 

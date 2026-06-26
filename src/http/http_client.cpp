@@ -14,9 +14,6 @@
 #include "oklib/net/buffer.h"
 #include "oklib/net/event_loop.h"
 #include "oklib/net/tcp_connection.h"
-#if OKLIB_ENABLE_TLS
-#include "tls_engine.h"
-#endif
 
 namespace oklib::http {
 namespace {
@@ -218,6 +215,7 @@ HttpClient::HttpClient(oklib::net::EventLoop* loop,
   if (options.retry) {
     client_.enable_retry();
   }
+  client_.set_tls_options(tls_options_);
   client_.set_connection_callback([this](const oklib::net::TcpConnectionPtr& connection) {
     on_connection(connection);
   });
@@ -265,17 +263,12 @@ void HttpClient::on_connection(const oklib::net::TcpConnectionPtr& connection) {
     connecting_ = false;
     connection_ = connection;
     parser_.reset();
-    tls_ready_ = !tls_options_.enabled;
-    if (tls_options_.enabled) {
-      if (!start_tls_handshake()) {
-        handle_parse_error();
-      }
-      return;
-    }
     flush_requests();
     return;
   }
 
+  const bool had_unfinished_work = !pending_requests_.empty() || !in_flight_requests_.empty() ||
+                                   awaiting_continue_ || streaming_response_active_;
   if (connection_ == connection) {
     connection_.reset();
   }
@@ -286,10 +279,9 @@ void HttpClient::on_connection(const oklib::net::TcpConnectionPtr& connection) {
   streaming_response_close_ = false;
   streaming_body_mode_ = StreamingBodyMode::none;
   awaiting_continue_ = false;
-  tls_ready_ = false;
-#if OKLIB_ENABLE_TLS
-  tls_.reset();
-#endif
+  if (tls_options_.enabled && had_unfinished_work && error_callback_) {
+    error_callback_();
+  }
   if (!stopped_ && !pending_requests_.empty()) {
     request_connect();
   }
@@ -299,17 +291,6 @@ void HttpClient::on_message(const oklib::net::TcpConnectionPtr&,
                             oklib::net::Buffer* buffer,
                             oklib::Timestamp) {
   loop_->assert_in_loop_thread();
-  oklib::net::Buffer plain_buffer;
-  if (tls_options_.enabled) {
-    if (!process_tls_input(buffer, &plain_buffer)) {
-      handle_parse_error();
-      return;
-    }
-    if (plain_buffer.readable_bytes() == 0) {
-      return;
-    }
-    buffer = &plain_buffer;
-  }
 
   for (;;) {
     if (streaming_response_active_) {
@@ -599,9 +580,6 @@ void HttpClient::flush_requests() {
   if (!connection_ || !connection_->connected()) {
     return;
   }
-  if (tls_options_.enabled && !tls_ready_) {
-    return;
-  }
   if (awaiting_continue_) {
     return;
   }
@@ -628,84 +606,6 @@ void HttpClient::handle_continue_response() {
   awaiting_continue_ = false;
 }
 
-bool HttpClient::start_tls_handshake() {
-  loop_->assert_in_loop_thread();
-#if OKLIB_ENABLE_TLS
-  std::string error;
-  tls_ = TlsEngine::create_client(tls_options_, host_, &error);
-  if (!tls_) {
-    return false;
-  }
-  auto weak = std::weak_ptr<oklib::net::TcpConnection>(connection_);
-  connection_->set_send_filter([this, weak](std::string_view plain) {
-    auto connection = weak.lock();
-    if (!connection || !tls_) {
-      return std::string{};
-    }
-    std::string encrypted;
-    std::string error;
-    if (!tls_->encrypt(plain, &encrypted, &error)) {
-      connection->force_close();
-      return std::string{};
-    }
-    return encrypted;
-  });
-
-  std::string encrypted;
-  if (!tls_->do_handshake(&encrypted, &error)) {
-    return false;
-  }
-  if (!encrypted.empty()) {
-    connection_->send_raw(encrypted);
-  }
-  tls_ready_ = tls_->handshake_complete();
-  if (tls_ready_) {
-    flush_requests();
-  }
-  return true;
-#else
-  (void)this;
-  return false;
-#endif
-}
-
-bool HttpClient::process_tls_input(oklib::net::Buffer* buffer, oklib::net::Buffer* plain) {
-  loop_->assert_in_loop_thread();
-#if OKLIB_ENABLE_TLS
-  if (!tls_) {
-    return false;
-  }
-
-  std::string error;
-  const auto encrypted_input = buffer->retrieve_all_as_string();
-  if (!tls_->receive_encrypted(encrypted_input, &error)) {
-    return false;
-  }
-
-  std::string encrypted_output;
-  std::string plain_output;
-  if (!tls_->read_decrypted(&plain_output, &encrypted_output, &error)) {
-    return false;
-  }
-  if (!encrypted_output.empty() && connection_) {
-    connection_->send_raw(encrypted_output);
-  }
-  const bool became_ready = !tls_ready_ && tls_->handshake_complete();
-  tls_ready_ = tls_->handshake_complete();
-  if (became_ready) {
-    flush_requests();
-  }
-  if (!plain_output.empty()) {
-    plain->append(plain_output);
-  }
-  return true;
-#else
-  (void)buffer;
-  (void)plain;
-  return false;
-#endif
-}
-
 void HttpClient::handle_parse_error() {
   parser_.reset();
   pending_requests_.clear();
@@ -718,10 +618,6 @@ void HttpClient::handle_parse_error() {
   streaming_body_remaining_ = 0;
   streaming_decoded_body_bytes_ = 0;
   streaming_trailer_bytes_ = 0;
-  tls_ready_ = false;
-#if OKLIB_ENABLE_TLS
-  tls_.reset();
-#endif
   if (error_callback_) {
     error_callback_();
   }

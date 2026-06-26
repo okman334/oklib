@@ -2,14 +2,26 @@
 
 #include <cerrno>
 #include <cstring>
+#include <utility>
 #include <unistd.h>
+#include <vector>
 
 #include "oklib/base/logging.h"
 #include "oklib/net/channel.h"
 #include "oklib/net/event_loop.h"
 #include "oklib/net/socket.h"
+#include "tls_engine.h"
 
 namespace oklib::net {
+
+struct TcpConnection::TlsContext {
+#if OKLIB_ENABLE_TLS
+  std::unique_ptr<TlsEngine> engine;
+#endif
+  Buffer plain_input_buffer;
+  std::vector<std::string> pending_plain_output;
+  std::string configuration_error;
+};
 
 TcpConnection::TcpConnection(EventLoop* loop, std::string name, int sockfd,
                              InetAddress local_address, InetAddress peer_address)
@@ -34,6 +46,18 @@ bool TcpConnection::connected() const noexcept {
 
 bool TcpConnection::disconnected() const noexcept {
   return state_.load(std::memory_order_acquire) == State::disconnected;
+}
+
+bool TcpConnection::tls_enabled() const noexcept {
+  return tls_ != nullptr;
+}
+
+bool TcpConnection::tls_established() const noexcept {
+#if OKLIB_ENABLE_TLS
+  return tls_ != nullptr && tls_->engine && tls_->engine->handshake_complete();
+#else
+  return false;
+#endif
 }
 
 void TcpConnection::send(std::string_view message) {
@@ -92,6 +116,39 @@ void TcpConnection::set_tcp_no_delay(bool on) {
   socket_->set_tcp_no_delay(on);
 }
 
+void TcpConnection::enable_client_tls(TlsClientOptions options, std::string server_name) {
+  if (!options.enabled) {
+    return;
+  }
+  tls_ = std::make_unique<TlsContext>();
+#if OKLIB_ENABLE_TLS
+  std::string error;
+  tls_->engine = TlsEngine::create_client(options, server_name, &error);
+  if (!tls_->engine) {
+    tls_->configuration_error = error.empty() ? "failed to create client TLS engine" : std::move(error);
+  }
+#else
+  (void)server_name;
+  tls_->configuration_error = "oklib was built without OKLIB_ENABLE_TLS=ON";
+#endif
+}
+
+void TcpConnection::enable_server_tls(TlsServerOptions options) {
+  if (!options.enabled) {
+    return;
+  }
+  tls_ = std::make_unique<TlsContext>();
+#if OKLIB_ENABLE_TLS
+  std::string error;
+  tls_->engine = TlsEngine::create_server(options, &error);
+  if (!tls_->engine) {
+    tls_->configuration_error = error.empty() ? "failed to create server TLS engine" : std::move(error);
+  }
+#else
+  tls_->configuration_error = "oklib was built without OKLIB_ENABLE_TLS=ON";
+#endif
+}
+
 void TcpConnection::start_read() {
   auto self = shared_from_this();
   loop_->run_in_loop([self] { self->start_read_in_loop(); });
@@ -106,7 +163,12 @@ void TcpConnection::connect_established() {
   loop_->assert_in_loop_thread();
   set_state(State::connected);
   channel_->enable_reading();
-  connection_callback_(shared_from_this());
+  if (tls_) {
+    start_tls_handshake(oklib::Timestamp::now());
+  }
+  if (connected()) {
+    connection_callback_(shared_from_this());
+  }
 }
 
 void TcpConnection::connect_destroyed() {
@@ -124,7 +186,22 @@ void TcpConnection::handle_read(oklib::Timestamp receive_time) {
   int saved_errno = 0;
   const auto n = input_buffer_.read_fd(channel_->fd(), &saved_errno);
   if (n > 0) {
-    message_callback_(shared_from_this(), &input_buffer_, receive_time);
+    if (tls_) {
+      const std::string encrypted = input_buffer_.retrieve_all_as_string();
+#if OKLIB_ENABLE_TLS
+      std::string error;
+      if (!tls_->engine || !tls_->engine->receive_encrypted(encrypted, &error)) {
+        fail_tls(error.empty() ? "failed to receive TLS data" : error);
+        return;
+      }
+      process_tls(receive_time);
+#else
+      (void)encrypted;
+      fail_tls(tls_->configuration_error);
+#endif
+    } else {
+      message_callback_(shared_from_this(), &input_buffer_, receive_time);
+    }
   } else if (n == 0) {
     handle_close();
   } else {
@@ -179,6 +256,27 @@ void TcpConnection::send_in_loop(std::string message) {
     message = send_filter_(message);
   }
   if (!message.empty()) {
+    if (tls_) {
+      if (!tls_established()) {
+        tls_->pending_plain_output.push_back(std::move(message));
+        start_tls_handshake(oklib::Timestamp::now());
+        return;
+      }
+#if OKLIB_ENABLE_TLS
+      std::string encrypted;
+      std::string error;
+      if (!tls_->engine || !tls_->engine->encrypt(message, &encrypted, &error)) {
+        fail_tls(error.empty() ? "failed to encrypt TLS data" : error);
+        return;
+      }
+      if (!encrypted.empty()) {
+        send_raw_in_loop(encrypted.data(), encrypted.size());
+      }
+#else
+      fail_tls(tls_->configuration_error);
+#endif
+      return;
+    }
     send_raw_in_loop(message.data(), message.size());
   }
 }
@@ -232,6 +330,88 @@ void TcpConnection::send_raw_in_loop(const void* data, std::size_t len) {
       channel_->enable_writing();
     }
   }
+}
+
+void TcpConnection::start_tls_handshake(oklib::Timestamp receive_time) {
+  loop_->assert_in_loop_thread();
+  if (!tls_) {
+    return;
+  }
+  if (!tls_->configuration_error.empty()) {
+    fail_tls(tls_->configuration_error);
+    return;
+  }
+  process_tls(receive_time);
+}
+
+void TcpConnection::process_tls(oklib::Timestamp receive_time) {
+  loop_->assert_in_loop_thread();
+  if (!tls_) {
+    return;
+  }
+#if OKLIB_ENABLE_TLS
+  if (!tls_->engine) {
+    fail_tls("TLS engine is not available");
+    return;
+  }
+
+  const bool was_established = tls_->engine->handshake_complete();
+  std::string plain;
+  std::string encrypted;
+  std::string error;
+  if (!tls_->engine->read_decrypted(&plain, &encrypted, &error)) {
+    fail_tls(error.empty() ? "failed to decrypt TLS data" : error);
+    return;
+  }
+  if (!encrypted.empty()) {
+    send_raw_in_loop(encrypted.data(), encrypted.size());
+  }
+
+  if (!was_established && tls_->engine->handshake_complete()) {
+    if (!flush_tls_pending_output()) {
+      return;
+    }
+  }
+
+  if (!plain.empty()) {
+    tls_->plain_input_buffer.append(plain);
+    message_callback_(shared_from_this(), &tls_->plain_input_buffer, receive_time);
+  }
+#else
+  fail_tls(tls_->configuration_error);
+#endif
+}
+
+bool TcpConnection::flush_tls_pending_output() {
+  loop_->assert_in_loop_thread();
+  if (!tls_ || tls_->pending_plain_output.empty()) {
+    return true;
+  }
+#if OKLIB_ENABLE_TLS
+  std::vector<std::string> pending;
+  pending.swap(tls_->pending_plain_output);
+  for (const auto& plain : pending) {
+    std::string encrypted;
+    std::string error;
+    if (!tls_->engine || !tls_->engine->encrypt(plain, &encrypted, &error)) {
+      fail_tls(error.empty() ? "failed to flush queued TLS data" : error);
+      return false;
+    }
+    if (!encrypted.empty()) {
+      send_raw_in_loop(encrypted.data(), encrypted.size());
+    }
+  }
+  return true;
+#else
+  fail_tls(tls_->configuration_error);
+  return false;
+#endif
+}
+
+void TcpConnection::fail_tls(const std::string& error) {
+  loop_->assert_in_loop_thread();
+  OKLIB_LOG_ERROR << "TLS error on " << name_ << ": " << error;
+  force_close_in_loop();
 }
 
 void TcpConnection::shutdown_in_loop() {

@@ -22,6 +22,12 @@ target_link_libraries(oklib_websocket_client PRIVATE oklib::websocket)
 if(OKLIB_ENABLE_TLS)
   add_executable(oklib_https_server https_server.cpp)
   target_link_libraries(oklib_https_server PRIVATE oklib::http)
+
+  add_executable(oklib_tls_echo_server tls_echo_server.cpp)
+  target_link_libraries(oklib_tls_echo_server PRIVATE oklib::net)
+
+  add_executable(oklib_tls_echo_client tls_echo_client.cpp)
+  target_link_libraries(oklib_tls_echo_client PRIVATE oklib::net)
 endif()
 
 add_executable(oklib_tcp_echo_server tcp_echo_server.cpp)
@@ -29,3 +35,6 @@ target_link_libraries(oklib_tcp_echo_server PRIVATE oklib::net)
 
 add_executable(oklib_tcp_echo_client tcp_echo_client.cpp)
 target_link_libraries(oklib_tcp_echo_client PRIVATE oklib::net)
+
+add_executable(oklib_timer_thread_demo timer_thread_demo.cpp)
+target_link_libraries(oklib_timer_thread_demo PRIVATE oklib::net)

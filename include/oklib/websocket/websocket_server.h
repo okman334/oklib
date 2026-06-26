@@ -74,6 +74,7 @@ class WebSocketServer : private oklib::Noncopyable {
   }
   void set_tls_options(oklib::http::TlsServerOptions options) {
     tls_options_ = std::move(options);
+    server_.set_tls_options(tls_options_);
   }
   void set_high_water_mark_callback(oklib::net::HighWaterMarkCallback callback,
                                     std::size_t mark) {

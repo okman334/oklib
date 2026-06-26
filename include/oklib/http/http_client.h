@@ -20,9 +20,6 @@
 namespace oklib::http {
 
 class HttpClientCache;
-#if OKLIB_ENABLE_TLS
-class TlsEngine;
-#endif
 
 struct HttpClientOptions {
   bool retry{false};
@@ -132,8 +129,6 @@ class HttpClient : private oklib::Noncopyable {
   void request_connect();
   void flush_requests();
   void handle_continue_response();
-  bool start_tls_handshake();
-  bool process_tls_input(oklib::net::Buffer* buffer, oklib::net::Buffer* plain);
   HttpParseStatus process_streaming_body(oklib::net::Buffer* buffer);
   HttpParseStatus process_fixed_streaming_body(oklib::net::Buffer* buffer);
   HttpParseStatus process_chunked_streaming_body(oklib::net::Buffer* buffer);
@@ -147,9 +142,6 @@ class HttpClient : private oklib::Noncopyable {
   oklib::net::TcpClient client_;
   std::shared_ptr<HttpClientCache> cache_;
   TlsClientOptions tls_options_;
-#if OKLIB_ENABLE_TLS
-  std::unique_ptr<TlsEngine> tls_;
-#endif
   ResponseCallback response_callback_;
   StreamingResponseCallback streaming_response_callback_;
   ErrorCallback error_callback_;
@@ -168,7 +160,6 @@ class HttpClient : private oklib::Noncopyable {
   bool awaiting_continue_{false};
   bool connecting_{false};
   bool stopped_{false};
-  bool tls_ready_{false};
 };
 
 }  // namespace oklib::http

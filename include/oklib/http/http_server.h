@@ -37,7 +37,10 @@ class HttpServer : private oklib::Noncopyable {
     streaming_http_callback_ = std::move(callback);
   }
   void set_router(const HttpRouter& router);
-  void set_tls_options(TlsServerOptions options) { tls_options_ = std::move(options); }
+  void set_tls_options(TlsServerOptions options) {
+    tls_options_ = std::move(options);
+    server_.set_tls_options(tls_options_);
+  }
   void set_allowed_methods(std::vector<std::string> methods) {
     allowed_methods_ = std::move(methods);
   }

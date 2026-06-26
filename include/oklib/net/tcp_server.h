@@ -12,6 +12,7 @@
 #include "oklib/base/noncopyable.h"
 #include "oklib/net/callbacks.h"
 #include "oklib/net/inet_address.h"
+#include "oklib/net/tls_options.h"
 
 namespace oklib::net {
 
@@ -44,6 +45,7 @@ class TcpServer : private oklib::Noncopyable {
   void set_connection_callback(ConnectionCallback callback) { connection_callback_ = std::move(callback); }
   void set_message_callback(MessageCallback callback) { message_callback_ = std::move(callback); }
   void set_write_complete_callback(WriteCompleteCallback callback) { write_complete_callback_ = std::move(callback); }
+  void set_tls_options(TlsServerOptions options) { tls_options_ = std::move(options); }
   void set_high_water_mark_callback(HighWaterMarkCallback callback, std::size_t mark) {
     high_water_mark_callback_ = std::move(callback);
     high_water_mark_ = mark;
@@ -64,6 +66,7 @@ class TcpServer : private oklib::Noncopyable {
   MessageCallback message_callback_{default_message_callback};
   WriteCompleteCallback write_complete_callback_;
   HighWaterMarkCallback high_water_mark_callback_;
+  TlsServerOptions tls_options_;
   std::size_t high_water_mark_{64 * 1024 * 1024};
   ThreadInitCallback thread_init_callback_;
   std::atomic<bool> started_{false};

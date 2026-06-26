@@ -1,28 +1,10 @@
 #pragma once
 
-#include <string>
-
-#ifndef OKLIB_ENABLE_TLS
-#define OKLIB_ENABLE_TLS 0
-#endif
+#include "oklib/net/tls_options.h"
 
 namespace oklib::http {
 
-struct TlsClientOptions {
-  bool enabled{false};
-  bool verify_peer{true};
-  std::string server_name;
-  std::string ca_file;
-  std::string ca_path;
-};
-
-struct TlsServerOptions {
-  bool enabled{false};
-  std::string cert_file;
-  std::string key_file;
-  std::string ca_file;
-  std::string ca_path;
-  bool verify_peer{false};
-};
+using TlsClientOptions = oklib::net::TlsClientOptions;
+using TlsServerOptions = oklib::net::TlsServerOptions;
 
 }  // namespace oklib::http

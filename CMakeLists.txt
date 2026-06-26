@@ -54,14 +54,22 @@ add_library(oklib_net STATIC
   src/net/socket.cpp
   src/net/tcp_client.cpp
   src/net/tcp_connection.cpp
-  src/net/tcp_server.cpp)
+  src/net/tcp_server.cpp
+  src/net/timer_thread.cpp)
+if(OKLIB_ENABLE_TLS)
+  target_sources(oklib_net PRIVATE src/net/tls_engine.cpp)
+endif()
 add_library(oklib::net ALIAS oklib_net)
 target_link_libraries(oklib_net PUBLIC oklib::base)
+if(OKLIB_ENABLE_TLS)
+  target_link_libraries(oklib_net PUBLIC OpenSSL::SSL OpenSSL::Crypto)
+endif()
 target_include_directories(oklib_net
   PUBLIC
     $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
     $<INSTALL_INTERFACE:include>)
 target_compile_features(oklib_net PUBLIC cxx_std_20)
+target_compile_definitions(oklib_net PUBLIC OKLIB_ENABLE_TLS=$<BOOL:${OKLIB_ENABLE_TLS}>)
 
 add_library(oklib_http STATIC
   src/http/http_cache.cpp
@@ -78,14 +86,8 @@ add_library(oklib_http STATIC
   src/http/http_semantics.cpp
   src/http/http_server.cpp
   src/http/http_sync_client.cpp)
-if(OKLIB_ENABLE_TLS)
-  target_sources(oklib_http PRIVATE src/http/tls_engine.cpp)
-endif()
 add_library(oklib::http ALIAS oklib_http)
 target_link_libraries(oklib_http PUBLIC oklib::net)
-if(OKLIB_ENABLE_TLS)
-  target_link_libraries(oklib_http PUBLIC OpenSSL::SSL OpenSSL::Crypto)
-endif()
 target_include_directories(oklib_http
   PUBLIC
     $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>

@@ -19,9 +19,6 @@
 #include "oklib/net/tcp_connection.h"
 #include "oklib/websocket/websocket_handshake.h"
 #include "websocket_compression.h"
-#if OKLIB_ENABLE_TLS
-#include "../http/tls_engine.h"
-#endif
 
 namespace oklib::websocket {
 namespace {
@@ -262,14 +259,6 @@ std::optional<ParsedEndpoint> parse_endpoint(std::string_view url, int* error_co
 
 }  // namespace
 
-#if OKLIB_ENABLE_TLS
-class WebSocketClient::TlsState {
- public:
-  std::unique_ptr<oklib::http::TlsEngine> engine;
-  oklib::net::Buffer plain_input;
-};
-#endif
-
 WebSocketClient::WebSocketClient(oklib::net::EventLoop* loop,
                                  std::string name,
                                  WebSocketOptions options)
@@ -316,6 +305,7 @@ int WebSocketClient::open(std::string url, oklib::http::HttpHeaders headers) {
   websocket_key_ = websocket_generate_key();
 
   client_ = std::make_unique<oklib::net::TcpClient>(loop_, endpoint->address, name_);
+  client_->set_tls_options(tls_options_);
   client_->set_connection_callback([this](const oklib::net::TcpConnectionPtr& connection) {
     on_connection(connection);
   });
@@ -355,17 +345,13 @@ void WebSocketClient::on_connection(const oklib::net::TcpConnectionPtr& connecti
   if (connection->connected()) {
     connection_ = connection;
     close_notified_ = false;
-    if (tls_options_.enabled) {
-      if (!start_tls_handshake()) {
-        report_error(WebSocketError::connection_error);
-        connection->force_close();
-      }
-      return;
-    }
     send_handshake_request();
     return;
   }
 
+  if (!handshake_complete_ && tls_options_.enabled) {
+    report_error(WebSocketError::connection_error);
+  }
   if (channel_) {
     WebSocketCloseInfo info;
     info.code = 1006;
@@ -377,29 +363,6 @@ void WebSocketClient::on_connection(const oklib::net::TcpConnectionPtr& connecti
 void WebSocketClient::on_message(const oklib::net::TcpConnectionPtr&,
                                  oklib::net::Buffer* buffer,
                                  oklib::Timestamp) {
-#if OKLIB_ENABLE_TLS
-  if (tls_options_.enabled) {
-    if (!tls_state_) {
-      report_error(WebSocketError::connection_error);
-      if (connection_) {
-        connection_->force_close();
-      }
-      return;
-    }
-    if (!process_tls_input(buffer, &tls_state_->plain_input)) {
-      report_error(WebSocketError::connection_error);
-      if (connection_) {
-        connection_->force_close();
-      }
-      return;
-    }
-    if (tls_state_->plain_input.readable_bytes() == 0) {
-      return;
-    }
-    on_plain_message(&tls_state_->plain_input);
-    return;
-  }
-#endif
   on_plain_message(buffer);
 }
 
@@ -430,81 +393,6 @@ void WebSocketClient::send_handshake_request() {
   }
   request.append("\r\n");
   connection_->send(request);
-}
-
-bool WebSocketClient::process_tls_input(oklib::net::Buffer* buffer,
-                                        oklib::net::Buffer* plain) {
-#if OKLIB_ENABLE_TLS
-  if (!tls_state_ || !tls_state_->engine) {
-    return false;
-  }
-  std::string error;
-  const auto encrypted_input = buffer->retrieve_all_as_string();
-  if (!tls_state_->engine->receive_encrypted(encrypted_input, &error)) {
-    return false;
-  }
-  std::string encrypted_output;
-  std::string plain_output;
-  if (!tls_state_->engine->read_decrypted(&plain_output, &encrypted_output, &error)) {
-    return false;
-  }
-  if (!encrypted_output.empty() && connection_) {
-    connection_->send_raw(encrypted_output);
-  }
-  const bool became_ready = !tls_ready_ && tls_state_->engine->handshake_complete();
-  tls_ready_ = tls_state_->engine->handshake_complete();
-  if (became_ready) {
-    send_handshake_request();
-  }
-  if (!plain_output.empty()) {
-    plain->append(plain_output);
-  }
-  return true;
-#else
-  (void)buffer;
-  (void)plain;
-  return false;
-#endif
-}
-
-bool WebSocketClient::start_tls_handshake() {
-#if OKLIB_ENABLE_TLS
-  tls_state_ = std::make_unique<TlsState>();
-  std::string error;
-  tls_state_->engine = oklib::http::TlsEngine::create_client(tls_options_, host_name_, &error);
-  if (!tls_state_->engine) {
-    return false;
-  }
-  std::weak_ptr<oklib::net::TcpConnection> weak = connection_;
-  connection_->set_send_filter([this, weak](std::string_view plain) {
-    auto connection = weak.lock();
-    if (!connection || !tls_state_ || !tls_state_->engine) {
-      return std::string{};
-    }
-    std::string encrypted;
-    std::string error;
-    if (!tls_state_->engine->encrypt(plain, &encrypted, &error)) {
-      connection->force_close();
-      return std::string{};
-    }
-    return encrypted;
-  });
-
-  std::string encrypted;
-  if (!tls_state_->engine->do_handshake(&encrypted, &error)) {
-    return false;
-  }
-  if (!encrypted.empty()) {
-    connection_->send_raw(encrypted);
-  }
-  tls_ready_ = tls_state_->engine->handshake_complete();
-  if (tls_ready_) {
-    send_handshake_request();
-  }
-  return true;
-#else
-  return false;
-#endif
 }
 
 void WebSocketClient::on_plain_message(oklib::net::Buffer* buffer) {
@@ -668,11 +556,7 @@ void WebSocketClient::reset_connection_state() {
   message_assembler_ = WebSocketMessageAssembler(options_);
   handshake_complete_ = false;
   compression_enabled_ = false;
-  tls_ready_ = false;
   close_notified_ = false;
-#if OKLIB_ENABLE_TLS
-  tls_state_.reset();
-#endif
 }
 
 }  // namespace oklib::websocket

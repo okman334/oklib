@@ -62,8 +62,6 @@ class WebSocketClient : private oklib::Noncopyable {
                   oklib::net::Buffer* buffer,
                   oklib::Timestamp receive_time);
   void send_handshake_request();
-  bool process_tls_input(oklib::net::Buffer* buffer, oklib::net::Buffer* plain);
-  bool start_tls_handshake();
   void on_plain_message(oklib::net::Buffer* buffer);
   void on_websocket_message(oklib::net::Buffer* buffer);
   void report_error(WebSocketError error);
@@ -92,12 +90,7 @@ class WebSocketClient : private oklib::Noncopyable {
   oklib::http::HttpHeaders headers_;
   bool handshake_complete_{false};
   bool compression_enabled_{false};
-  bool tls_ready_{false};
   bool close_notified_{false};
-#if OKLIB_ENABLE_TLS
-  class TlsState;
-  std::unique_ptr<TlsState> tls_state_;
-#endif
 };
 
 }  // namespace oklib::websocket

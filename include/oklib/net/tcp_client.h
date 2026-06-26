@@ -8,6 +8,7 @@
 #include "oklib/net/callbacks.h"
 #include "oklib/net/connector.h"
 #include "oklib/net/inet_address.h"
+#include "oklib/net/tls_options.h"
 
 namespace oklib::net {
 
@@ -26,6 +27,7 @@ class TcpClient : private oklib::Noncopyable {
   void set_connection_callback(ConnectionCallback callback) { connection_callback_ = std::move(callback); }
   void set_message_callback(MessageCallback callback) { message_callback_ = std::move(callback); }
   void set_write_complete_callback(WriteCompleteCallback callback) { write_complete_callback_ = std::move(callback); }
+  void set_tls_options(TlsClientOptions options) { tls_options_ = std::move(options); }
 
   [[nodiscard]] TcpConnectionPtr connection() const;
 
@@ -35,10 +37,12 @@ class TcpClient : private oklib::Noncopyable {
 
   EventLoop* loop_;
   std::shared_ptr<Connector> connector_;
+  InetAddress server_address_;
   std::string name_;
   ConnectionCallback connection_callback_{default_connection_callback};
   MessageCallback message_callback_{default_message_callback};
   WriteCompleteCallback write_complete_callback_;
+  TlsClientOptions tls_options_;
   mutable std::mutex mutex_;
   TcpConnectionPtr connection_;
   bool retry_{false};

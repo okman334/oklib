@@ -20,6 +20,16 @@ add_executable(oklib_tcp_test net/tcp_test.cpp)
 target_link_libraries(oklib_tcp_test PRIVATE oklib::net)
 add_test(NAME oklib.tcp COMMAND oklib_tcp_test)
 
+add_executable(oklib_timer_thread_test net/timer_thread_test.cpp)
+target_link_libraries(oklib_timer_thread_test PRIVATE oklib::net)
+add_test(NAME oklib.timer_thread COMMAND oklib_timer_thread_test)
+
+if(OKLIB_ENABLE_TLS)
+  add_executable(oklib_tcp_tls_test net/tcp_tls_test.cpp)
+  target_link_libraries(oklib_tcp_tls_test PRIVATE oklib::net)
+  add_test(NAME oklib.tcp.tls COMMAND oklib_tcp_tls_test)
+endif()
+
 add_executable(oklib_http_test http/http_test.cpp)
 target_link_libraries(oklib_http_test PRIVATE oklib::http)
 add_test(NAME oklib.http COMMAND oklib_http_test)

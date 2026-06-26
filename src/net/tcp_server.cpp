@@ -65,6 +65,7 @@ void TcpServer::new_connection(int sockfd, const InetAddress& peer_address) {
 
   auto connection =
       std::make_shared<TcpConnection>(io_loop, conn_name, sockfd, local_address, peer_address);
+  connection->enable_server_tls(tls_options_);
   connections_[conn_name] = connection;
   connection->set_connection_callback(connection_callback_);
   connection->set_message_callback(message_callback_);

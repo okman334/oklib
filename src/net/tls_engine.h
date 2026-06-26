@@ -4,13 +4,13 @@
 #include <string>
 #include <string_view>
 
-#include "oklib/http/tls_options.h"
+#include "oklib/net/tls_options.h"
 
 #if OKLIB_ENABLE_TLS
 #include <openssl/ssl.h>
 #endif
 
-namespace oklib::http {
+namespace oklib::net {
 
 #if OKLIB_ENABLE_TLS
 
@@ -46,4 +46,4 @@ class TlsEngine {
 
 #endif
 
-}  // namespace oklib::http
+}  // namespace oklib::net

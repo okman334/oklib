@@ -2,12 +2,13 @@
 
 #if OKLIB_ENABLE_TLS
 
+#include <algorithm>
 #include <array>
 #include <mutex>
 
 #include <openssl/err.h>
 
-namespace oklib::http {
+namespace oklib::net {
 namespace {
 
 void initialize_openssl_once() {
@@ -304,6 +305,6 @@ bool TlsEngine::openssl_ok_or_want(int result, std::string* error) {
   return false;
 }
 
-}  // namespace oklib::http
+}  // namespace oklib::net
 
 #endif
