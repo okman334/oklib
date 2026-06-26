@@ -54,6 +54,10 @@ add_executable(oklib_http_router_test http/http_router_test.cpp)
 target_link_libraries(oklib_http_router_test PRIVATE oklib::http)
 add_test(NAME oklib.http.router COMMAND oklib_http_router_test)
 
+add_executable(oklib_http_content_type_test http/content_type_test.cpp)
+target_link_libraries(oklib_http_content_type_test PRIVATE oklib::http)
+add_test(NAME oklib.http.content_type COMMAND oklib_http_content_type_test)
+
 if(OKLIB_ENABLE_TLS)
   add_executable(oklib_http_tls_test http/http_tls_test.cpp)
   target_link_libraries(oklib_http_tls_test PRIVATE oklib::http)

@@ -12,6 +12,7 @@
 #include <utility>
 
 #include "oklib/base/thread_pool.h"
+#include "oklib/http/content_type.h"
 #include "oklib/http/http_request.h"
 #include "oklib/http/http_request_body_stream.h"
 #include "oklib/http/http_response.h"
@@ -266,7 +267,8 @@ inline void install_http_demo_routes(oklib::http::HttpServer& server,
                            oklib::http::HttpResponseWriter writer) {
                           const auto upload_dir = std::make_shared<std::filesystem::path>("uploads");
                           const auto request_content_type = request.header("Content-Type");
-                          if (oklib::http::multipart_boundary(request_content_type).has_value()) {
+                          if (oklib::http::content_type_from_string(request_content_type) ==
+                              oklib::http::ContentType::multipart_form_data) {
                             auto body = std::make_shared<std::string>();
                             body_stream.set_data_callback([body](std::string_view chunk) {
                               body->append(chunk);
