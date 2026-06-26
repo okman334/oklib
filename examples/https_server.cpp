@@ -71,9 +71,12 @@ int main(int argc, char** argv) {
 
   std::cout << "oklib HTTPS demo server listening on "
             << server.listen_address().to_ip_port() << '\n'
-            << "upload raw jpg bytes with:\n"
+            << "upload raw bytes with:\n"
             << "  curl -k -H 'Content-Type: image/jpeg' --data-binary @photo.jpg "
-            << "https://127.0.0.1:" << port << "/upload-file?name=photo.jpg\n";
+            << "'https://127.0.0.1:" << port << "/upload-file?name=photo.jpg'\n"
+            << "upload multipart form data with:\n"
+            << "  curl -k -F 'file=@movie.mp4;type=video/mp4' "
+            << "'https://127.0.0.1:" << port << "/upload-file'\n";
   loop.loop();
   return 0;
 }

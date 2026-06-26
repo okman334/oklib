@@ -18,6 +18,7 @@
 #include "oklib/http/http_response_writer.h"
 #include "oklib/http/http_router.h"
 #include "oklib/http/http_server.h"
+#include "oklib/http/multipart_parser.h"
 
 namespace oklib::examples {
 
@@ -79,7 +80,7 @@ inline std::string query_param(std::string_view query, std::string_view name) {
 
 inline std::string sanitized_upload_file_name(std::string file_name) {
   if (file_name.empty()) {
-    file_name = "upload.jpg";
+    file_name = "upload.bin";
   }
 
   std::string sanitized;
@@ -97,22 +98,41 @@ inline std::string sanitized_upload_file_name(std::string file_name) {
     sanitized.erase(sanitized.begin());
   }
   if (sanitized.empty()) {
-    sanitized = "upload.jpg";
-  }
-
-  const auto lower_name = [&] {
-    std::string lower = sanitized;
-    for (char& ch : lower) {
-      ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
-    }
-    return lower;
-  }();
-  if (lower_name.size() < 4 ||
-      (lower_name.rfind(".jpg") != lower_name.size() - 4 &&
-       (lower_name.size() < 5 || lower_name.rfind(".jpeg") != lower_name.size() - 5))) {
-    sanitized += ".jpg";
+    sanitized = "upload.bin";
   }
   return sanitized;
+}
+
+inline void send_upload_json(oklib::http::HttpResponseWriter writer,
+                             std::string_view file_name,
+                             const std::filesystem::path& path,
+                             std::size_t bytes,
+                             std::string_view content_type) {
+  auto response = writer.make_response();
+  response.set_status_code(201);
+  response.set_content_type("application/json; charset=utf-8");
+  response.set_body("{\"file\":\"" + json_escape(file_name) +
+                    "\",\"path\":\"" + json_escape(path.string()) +
+                    "\",\"content_type\":\"" + json_escape(content_type) +
+                    "\",\"bytes\":" + std::to_string(bytes) + "}\n");
+  writer.send(std::move(response));
+}
+
+inline bool save_upload_body(const std::filesystem::path& upload_dir,
+                             const std::filesystem::path& path,
+                             std::string_view body) {
+  std::error_code ec;
+  std::filesystem::create_directories(upload_dir, ec);
+  if (ec) {
+    return false;
+  }
+
+  std::ofstream file(path, std::ios::binary | std::ios::trunc);
+  if (!file.is_open()) {
+    return false;
+  }
+  file.write(body.data(), static_cast<std::streamsize>(body.size()));
+  return static_cast<bool>(file);
 }
 
 inline void install_http_demo_routes(oklib::http::HttpServer& server,
@@ -245,6 +265,59 @@ inline void install_http_demo_routes(oklib::http::HttpServer& server,
                            oklib::http::HttpRequestBodyStream body_stream,
                            oklib::http::HttpResponseWriter writer) {
                           const auto upload_dir = std::make_shared<std::filesystem::path>("uploads");
+                          const auto request_content_type = request.header("Content-Type");
+                          if (oklib::http::multipart_boundary(request_content_type).has_value()) {
+                            auto body = std::make_shared<std::string>();
+                            body_stream.set_data_callback([body](std::string_view chunk) {
+                              body->append(chunk);
+                            });
+                            body_stream.set_complete_callback(
+                                [body,
+                                 upload_dir,
+                                 request_content_type,
+                                 fallback_name = query_param(request.query(), "name"),
+                                 writer = std::move(writer)]() mutable {
+                                  const auto parsed = oklib::http::parse_multipart_form_data(
+                                      request_content_type, *body);
+                                  if (!parsed.ok()) {
+                                    send_text(std::move(writer), 400, "malformed multipart upload\n");
+                                    return;
+                                  }
+
+                                  const oklib::http::MultipartPart* file_part = nullptr;
+                                  if (const auto* named_file = parsed.find("file");
+                                      named_file != nullptr && named_file->is_file()) {
+                                    file_part = named_file;
+                                  } else {
+                                    for (const auto& part : parsed.parts) {
+                                      if (part.is_file()) {
+                                        file_part = &part;
+                                        break;
+                                      }
+                                    }
+                                  }
+                                  if (file_part == nullptr) {
+                                    send_text(std::move(writer), 400, "missing multipart file part\n");
+                                    return;
+                                  }
+
+                                  auto file_name = sanitized_upload_file_name(
+                                      file_part->filename.empty() ? fallback_name : file_part->filename);
+                                  auto path = *upload_dir / file_name;
+                                  if (!save_upload_body(*upload_dir, path, file_part->body)) {
+                                    send_text(std::move(writer), 500, "failed to save upload\n");
+                                    return;
+                                  }
+
+                                  send_upload_json(std::move(writer),
+                                                   file_name,
+                                                   path,
+                                                   file_part->body.size(),
+                                                   file_part->content_type);
+                                });
+                            return;
+                          }
+
                           const auto file_name = std::make_shared<std::string>(
                               sanitized_upload_file_name(query_param(request.query(), "name")));
                           const auto path = std::make_shared<std::filesystem::path>(
@@ -273,7 +346,13 @@ inline void install_http_demo_routes(oklib::http::HttpServer& server,
                             }
                           });
                           body_stream.set_complete_callback(
-                              [file_name, path, bytes, ok, file, writer = std::move(writer)]() mutable {
+                              [file_name,
+                               path,
+                               bytes,
+                               ok,
+                               file,
+                               request_content_type,
+                               writer = std::move(writer)]() mutable {
                                 if (file->is_open()) {
                                   file->close();
                                 }
@@ -283,13 +362,11 @@ inline void install_http_demo_routes(oklib::http::HttpServer& server,
                                   return;
                                 }
 
-                                auto response = writer.make_response();
-                                response.set_status_code(201);
-                                response.set_content_type("application/json; charset=utf-8");
-                                response.set_body("{\"file\":\"" + json_escape(*file_name) +
-                                                  "\",\"path\":\"" + json_escape(path->string()) +
-                                                  "\",\"bytes\":" + std::to_string(*bytes) + "}\n");
-                                writer.send(std::move(response));
+                                send_upload_json(std::move(writer),
+                                                 *file_name,
+                                                 *path,
+                                                 *bytes,
+                                                 request_content_type);
                               });
                         });
 
