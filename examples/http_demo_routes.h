@@ -123,10 +123,16 @@ inline void install_http_demo_routes(oklib::http::HttpServer& server,
                      oklib::http::HttpResponseWriter writer) {
     send_text(std::move(writer), 200,
               "oklib HTTP demo\n"
-              "routes: GET /headers, GET /query?name=oklib, POST /echo, "
+              "routes: GET /ping, GET /headers, GET /query?name=oklib, POST /echo, "
               "POST /stream-upload, POST /upload-file?name=photo.jpg, "
               "GET /async, GET /chunks, GET /cache\n");
   });
+
+  router.get("/ping",
+             [](const oklib::http::HttpRequest&,
+                oklib::http::HttpResponseWriter writer) {
+               send_text(std::move(writer), 200, "pong\n");
+             });
 
   router.get("/headers",
              [](const oklib::http::HttpRequest& request,

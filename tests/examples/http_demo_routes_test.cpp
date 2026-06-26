@@ -12,6 +12,7 @@
 #include <chrono>
 #include <cstdlib>
 #include <filesystem>
+#include <functional>
 #include <fstream>
 #include <iostream>
 #include <iterator>
@@ -29,7 +30,8 @@ void require(bool condition, const char* message) {
 
 std::string request_once(const std::string& request,
                          const oklib::net::InetAddress& address,
-                         oklib::net::EventLoop* loop) {
+                         oklib::net::EventLoop* loop,
+                         const std::function<bool(const std::string&)>& done = {}) {
   int fd = ::socket(AF_INET, SOCK_STREAM, 0);
   require(fd >= 0, "socket succeeds");
   require(::connect(fd, address.sockaddr_ptr(), address.length()) == 0, "connect succeeds");
@@ -42,7 +44,10 @@ std::string request_once(const std::string& request,
     const auto n = ::read(fd, buffer, sizeof(buffer));
     if (n > 0) {
       response.append(buffer, static_cast<std::size_t>(n));
-      if (response.find("\r\n\r\n") != std::string::npos &&
+      if (done && done(response)) {
+        break;
+      }
+      if (!done && response.find("\r\n\r\n") != std::string::npos &&
           response.find("\"bytes\"") != std::string::npos) {
         break;
       }
@@ -53,6 +58,35 @@ std::string request_once(const std::string& request,
   ::close(fd);
   loop->queue_in_loop([loop] { loop->quit(); });
   return response;
+}
+
+void test_ping_route_returns_pong() {
+  oklib::net::EventLoop loop;
+  oklib::ThreadPool workers("http-demo-routes-ping-test-workers");
+  workers.start(1);
+
+  oklib::http::HttpServer server(&loop,
+                                 oklib::net::InetAddress::loopback(0),
+                                 "http-demo-routes-ping-test");
+  oklib::examples::install_http_demo_routes(server, workers);
+  server.start();
+
+  std::string response;
+  std::thread client([&] {
+    response = request_once(
+        "GET /ping HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n",
+        server.listen_address(),
+        &loop,
+        [](const std::string& value) { return value.find("pong\n") != std::string::npos; });
+  });
+  loop.run_after(std::chrono::seconds(2), [&] { loop.quit(); });
+  loop.loop();
+  client.join();
+  workers.stop();
+
+  require(response.find("HTTP/1.1 200 OK") != std::string::npos,
+          "ping route returns 200");
+  require(response.find("pong\n") != std::string::npos, "ping route returns pong body");
 }
 
 std::string read_file(const std::filesystem::path& path) {
@@ -108,6 +142,7 @@ void test_upload_file_route_saves_raw_jpeg_body() {
 }  // namespace
 
 int main() {
+  test_ping_route_returns_pong();
   test_upload_file_route_saves_raw_jpeg_body();
   return 0;
 }
