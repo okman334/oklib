@@ -116,6 +116,7 @@ class HttpParser {
   std::uint64_t current_chunk_size_{0};
   std::uint64_t decoded_body_bytes_{0};
   bool chunked_{false};
+  bool head_only_{false};
 };
 
 }  // namespace oklib::http

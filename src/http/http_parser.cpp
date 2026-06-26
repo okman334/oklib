@@ -292,11 +292,13 @@ HttpParser::HttpParser(HttpParserMode mode, HttpParserOptions options)
 
 HttpParseStatus HttpParser::parse_request(oklib::net::Buffer* buffer, oklib::Timestamp receive_time) {
   mode_ = HttpParserMode::request;
+  head_only_ = false;
   return parse(buffer, receive_time);
 }
 
 HttpParseStatus HttpParser::parse_request_head(oklib::net::Buffer* buffer, oklib::Timestamp receive_time) {
   mode_ = HttpParserMode::request;
+  head_only_ = true;
   for (;;) {
     switch (state_) {
       case State::start_line: {
@@ -365,11 +367,13 @@ HttpParseStatus HttpParser::parse_request_head(oklib::net::Buffer* buffer, oklib
 
 HttpParseStatus HttpParser::parse_response(oklib::net::Buffer* buffer) {
   mode_ = HttpParserMode::response;
+  head_only_ = false;
   return parse(buffer, oklib::Timestamp::invalid());
 }
 
 HttpParseStatus HttpParser::parse_response_head(oklib::net::Buffer* buffer) {
   mode_ = HttpParserMode::response;
+  head_only_ = true;
   for (;;) {
     switch (state_) {
       case State::start_line: {
@@ -446,6 +450,7 @@ void HttpParser::reset() {
   current_chunk_size_ = 0;
   decoded_body_bytes_ = 0;
   chunked_ = false;
+  head_only_ = false;
 }
 
 bool HttpParser::complete() const noexcept {
@@ -683,7 +688,7 @@ bool HttpParser::finish_headers() {
     return finish_message();
   }
 
-  if (*content_length > options_.max_body) {
+  if (!head_only_ && *content_length > options_.max_body) {
     return set_error(HttpParseError::body_too_large);
   }
 

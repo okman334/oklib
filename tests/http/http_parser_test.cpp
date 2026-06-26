@@ -93,6 +93,23 @@ void test_parses_chunked_request_with_trailers() {
   require(parser.request().trailers().get("x-trailer") == "done", "trailers parsed");
 }
 
+void test_parse_request_head_allows_large_streaming_body() {
+  oklib::net::Buffer buffer;
+  append(&buffer,
+         "POST /upload-file HTTP/1.1\r\n"
+         "Host: localhost\r\n"
+         "Content-Type: multipart/form-data; boundary=----oklib\r\n"
+         "Content-Length: 10485760\r\n"
+         "\r\n");
+
+  oklib::http::HttpParser parser;
+  require(parser.parse_request_head(&buffer, receive_time()) == oklib::http::HttpParseStatus::complete,
+          "request head parser accepts large streaming content-length");
+  require(parser.request().content_length() == 10485760,
+          "large streaming content-length is exposed");
+  require(buffer.readable_bytes() == 0, "request head bytes consumed");
+}
+
 void test_rejects_ambiguous_message_framing() {
   {
     oklib::net::Buffer buffer;
@@ -152,6 +169,7 @@ int main() {
   test_headers_are_case_insensitive_and_keep_repeated_values();
   test_parses_content_length_request_and_keeps_pipeline_leftover();
   test_parses_chunked_request_with_trailers();
+  test_parse_request_head_allows_large_streaming_body();
   test_rejects_ambiguous_message_framing();
   test_parses_response_head_and_body_for_client();
   return 0;
