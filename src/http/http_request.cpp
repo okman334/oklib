@@ -1,5 +1,7 @@
 #include "oklib/http/http_request.h"
 
+#include "oklib/http/url_encoding.h"
+
 #include <cctype>
 
 namespace oklib::http {
@@ -104,6 +106,25 @@ bool HttpRequest::set_method(std::string_view method) {
 
 void HttpRequest::set_target(std::string_view target) {
   target_.assign(target);
+}
+
+std::optional<std::string> HttpRequest::query_param(std::string_view name) const {
+  std::string_view remaining(query_);
+  while (!remaining.empty()) {
+    const auto amp = remaining.find('&');
+    const auto part = amp == std::string_view::npos ? remaining : remaining.substr(0, amp);
+    const auto equal = part.find('=');
+    const auto key = equal == std::string_view::npos ? part : part.substr(0, equal);
+    if (url_decode(key, UrlDecodeMode::form) == name) {
+      return url_decode(equal == std::string_view::npos ? std::string_view{} : part.substr(equal + 1),
+                        UrlDecodeMode::form);
+    }
+    if (amp == std::string_view::npos) {
+      break;
+    }
+    remaining.remove_prefix(amp + 1);
+  }
+  return std::nullopt;
 }
 
 void HttpRequest::add_header(std::string_view field, std::string_view value) {

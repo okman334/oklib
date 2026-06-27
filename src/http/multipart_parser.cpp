@@ -1,5 +1,7 @@
 #include "oklib/http/multipart_parser.h"
 
+#include "oklib/http/url_encoding.h"
+
 #include <algorithm>
 #include <cctype>
 #include <string>
@@ -121,6 +123,21 @@ std::string parameter_value(const ParsedHeaderValue& parsed, std::string_view ke
   return {};
 }
 
+std::string decoded_parameter_value(const ParsedHeaderValue& parsed, std::string_view key) {
+  return url_decode(parameter_value(parsed, key), UrlDecodeMode::percent);
+}
+
+std::string decoded_filename_value(const ParsedHeaderValue& parsed) {
+  auto filename = decoded_parameter_value(parsed, "filename");
+  const auto filename_star = parameter_value(parsed, "filename*");
+  if (!filename_star.empty()) {
+    if (auto decoded = decode_rfc5987_value(filename_star); decoded.has_value()) {
+      filename = std::move(*decoded);
+    }
+  }
+  return filename;
+}
+
 MultipartParseResult failure(MultipartParseError error, std::string message) {
   MultipartParseResult result;
   result.error = error;
@@ -224,8 +241,8 @@ MultipartParseResult parse_multipart_form_data(std::string_view content_type,
       return failure(MultipartParseError::malformed_headers,
                      "part Content-Disposition must be form-data");
     }
-    part.name = parameter_value(disposition, "name");
-    part.filename = parameter_value(disposition, "filename");
+    part.name = decoded_parameter_value(disposition, "name");
+    part.filename = decoded_filename_value(disposition);
     part.content_type = part.headers.get("Content-Type");
 
     const std::size_t content_begin = header_end + 4;

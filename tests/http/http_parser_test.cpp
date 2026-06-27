@@ -70,6 +70,42 @@ void test_parses_content_length_request_and_keeps_pipeline_leftover() {
   require(parser.request().path() == "/next", "pipeline path parsed");
 }
 
+void test_request_query_param_decodes_urlencoded_values() {
+  oklib::net::Buffer buffer;
+  append(&buffer,
+         "GET /upload-file?name=%E6%A2%A8%E5%AD%90+%E8%8A%A5%E8%8F%9C.mp4"
+         "&raw=a%2Fb&empty=&bad=%ZZ HTTP/1.1\r\n"
+         "Host: localhost\r\n"
+         "\r\n");
+
+  oklib::http::HttpParser parser;
+  require(parser.parse_request(&buffer, receive_time()) == oklib::http::HttpParseStatus::complete,
+          "query parameter request completes");
+
+  const auto& request = parser.request();
+  require(request.query() ==
+              "name=%E6%A2%A8%E5%AD%90+%E8%8A%A5%E8%8F%9C.mp4&raw=a%2Fb&empty=&bad=%ZZ",
+          "raw query string is preserved");
+
+  const auto name = request.query_param("name");
+  require(name.has_value(), "decoded name parameter exists");
+  require(*name == "梨子 芥菜.mp4", "query parameter utf8 and plus are decoded");
+
+  const auto raw = request.query_param("raw");
+  require(raw.has_value(), "decoded raw parameter exists");
+  require(*raw == "a/b", "query parameter percent slash is decoded");
+
+  const auto empty = request.query_param("empty");
+  require(empty.has_value(), "empty parameter exists");
+  require(empty->empty(), "empty parameter value is preserved");
+
+  const auto bad = request.query_param("bad");
+  require(bad.has_value(), "bad percent parameter exists");
+  require(*bad == "%ZZ", "invalid percent escapes are left unchanged");
+
+  require(!request.query_param("missing").has_value(), "missing query parameter returns nullopt");
+}
+
 void test_parses_chunked_request_with_trailers() {
   oklib::net::Buffer buffer;
   append(&buffer,
@@ -168,6 +204,7 @@ void test_parses_response_head_and_body_for_client() {
 int main() {
   test_headers_are_case_insensitive_and_keep_repeated_values();
   test_parses_content_length_request_and_keeps_pipeline_leftover();
+  test_request_query_param_decodes_urlencoded_values();
   test_parses_chunked_request_with_trailers();
   test_parse_request_head_allows_large_streaming_body();
   test_rejects_ambiguous_message_framing();

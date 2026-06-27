@@ -87,7 +87,8 @@ add_library(oklib_http STATIC
   src/http/http_semantics.cpp
   src/http/http_server.cpp
   src/http/http_sync_client.cpp
-  src/http/multipart_parser.cpp)
+  src/http/multipart_parser.cpp
+  src/http/url_encoding.cpp)
 add_library(oklib::http ALIAS oklib_http)
 target_link_libraries(oklib_http PUBLIC oklib::net)
 target_include_directories(oklib_http

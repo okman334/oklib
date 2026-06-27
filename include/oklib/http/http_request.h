@@ -48,6 +48,7 @@ class HttpRequest {
   [[nodiscard]] const std::string& target() const noexcept { return target_; }
   [[nodiscard]] const std::string& path() const noexcept { return path_; }
   [[nodiscard]] const std::string& query() const noexcept { return query_; }
+  [[nodiscard]] std::optional<std::string> query_param(std::string_view name) const;
   [[nodiscard]] const std::string& body() const noexcept { return body_; }
   [[nodiscard]] bool has_content_length() const noexcept { return content_length_.has_value(); }
   [[nodiscard]] std::uint64_t content_length() const noexcept { return content_length_.value_or(0); }

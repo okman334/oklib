@@ -57,6 +57,47 @@ void test_parses_field_and_file_part() {
   require(file->body == mp4_body, "binary file body is preserved");
 }
 
+void test_decodes_percent_encoded_multipart_filename() {
+  const std::string encoded_name =
+      "%E6%A2%A8%E5%AD%90%E8%8A%A5%E8%8F%9C%20-%20"
+      "%E6%83%85%E7%BD%91%28%E7%83%9F%E5%97%93%E7%89%88%29.mp4";
+  const std::string body =
+      "------oklib\r\n"
+      "Content-Disposition: form-data; name=\"file\"; filename=\"" + encoded_name + "\"\r\n"
+      "Content-Type: video/mp4\r\n"
+      "\r\n"
+      "video\r\n"
+      "------oklib--\r\n";
+
+  const auto result = oklib::http::parse_multipart_form_data(
+      "multipart/form-data; boundary=----oklib", body);
+
+  require(result.ok(), "multipart body with percent encoded filename parses");
+  const auto* file = result.find("file");
+  require(file != nullptr, "file part is found");
+  require(file->filename == "梨子芥菜 - 情网(烟嗓版).mp4",
+          "multipart filename percent encoding is decoded");
+}
+
+void test_prefers_rfc5987_multipart_filename_star() {
+  const std::string body =
+      "------oklib\r\n"
+      "Content-Disposition: form-data; name=\"file\"; filename=\"fallback.mp4\"; "
+      "filename*=UTF-8''%E6%A2%A8%E5%AD%90.mp4\r\n"
+      "Content-Type: video/mp4\r\n"
+      "\r\n"
+      "video\r\n"
+      "------oklib--\r\n";
+
+  const auto result = oklib::http::parse_multipart_form_data(
+      "multipart/form-data; boundary=----oklib", body);
+
+  require(result.ok(), "multipart body with filename star parses");
+  const auto* file = result.find("file");
+  require(file != nullptr, "filename star file part is found");
+  require(file->filename == "梨子.mp4", "filename star utf8 value is decoded and preferred");
+}
+
 void test_rejects_missing_boundary() {
   const auto result = oklib::http::parse_multipart_form_data(
       "multipart/form-data", "--missing\r\n");
@@ -70,6 +111,8 @@ void test_rejects_missing_boundary() {
 int main() {
   test_extracts_boundary_from_content_type();
   test_parses_field_and_file_part();
+  test_decodes_percent_encoded_multipart_filename();
+  test_prefers_rfc5987_multipart_filename_star();
   test_rejects_missing_boundary();
   return 0;
 }
