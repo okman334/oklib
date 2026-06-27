@@ -1,0 +1,336 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>oklib Upload Demo</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #f6f7f9;
+      color: #20242a;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      padding: 32px 16px;
+      box-sizing: border-box;
+    }
+
+    main {
+      width: min(760px, 100%);
+      background: #ffffff;
+      border: 1px solid #d8dde5;
+      border-radius: 8px;
+      padding: 24px;
+      box-sizing: border-box;
+      box-shadow: 0 12px 32px rgba(20, 30, 45, 0.08);
+    }
+
+    h1 {
+      margin: 0 0 20px;
+      font-size: 24px;
+      font-weight: 700;
+    }
+
+    label {
+      display: block;
+      margin: 16px 0 8px;
+      font-size: 14px;
+      font-weight: 600;
+    }
+
+    input[type="url"],
+    input[type="text"] {
+      width: 100%;
+      height: 42px;
+      box-sizing: border-box;
+      border: 1px solid #c9d0da;
+      border-radius: 6px;
+      padding: 0 12px;
+      font: inherit;
+      background: #ffffff;
+      color: inherit;
+    }
+
+    input[type="file"] {
+      display: none;
+    }
+
+    .row {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+
+    .file-name {
+      min-height: 24px;
+      color: #5b6470;
+      font-size: 14px;
+      overflow-wrap: anywhere;
+    }
+
+    .mode {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px;
+      margin-top: 8px;
+    }
+
+    .mode input {
+      position: absolute;
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    .mode span {
+      display: block;
+      border: 1px solid #c9d0da;
+      border-radius: 6px;
+      padding: 11px 12px;
+      text-align: center;
+      font-size: 14px;
+      cursor: pointer;
+      user-select: none;
+    }
+
+    .mode input:checked + span {
+      border-color: #1769e0;
+      background: #eaf2ff;
+      color: #0f4ca8;
+      font-weight: 700;
+    }
+
+    button,
+    .file-button {
+      min-height: 40px;
+      border: 1px solid #1769e0;
+      border-radius: 6px;
+      padding: 0 14px;
+      background: #1769e0;
+      color: #ffffff;
+      font: inherit;
+      font-weight: 700;
+      cursor: pointer;
+    }
+
+    button.secondary,
+    .file-button {
+      background: #ffffff;
+      color: #1769e0;
+    }
+
+    button:disabled {
+      cursor: not-allowed;
+      opacity: 0.55;
+    }
+
+    progress {
+      width: 100%;
+      height: 14px;
+      margin-top: 18px;
+    }
+
+    pre {
+      min-height: 120px;
+      margin: 18px 0 0;
+      padding: 14px;
+      border: 1px solid #d8dde5;
+      border-radius: 6px;
+      background: #111827;
+      color: #d9e5f5;
+      overflow: auto;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      font-size: 13px;
+      line-height: 1.45;
+    }
+
+    .actions {
+      margin-top: 18px;
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        background: #111418;
+        color: #e8edf4;
+      }
+
+      main,
+      input[type="url"],
+      input[type="text"],
+      button.secondary,
+      .file-button {
+        background: #171c22;
+      }
+
+      main,
+      input[type="url"],
+      input[type="text"],
+      .mode span {
+        border-color: #343c47;
+      }
+
+      .mode input:checked + span {
+        background: #102849;
+        color: #9dc4ff;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>oklib Upload Demo</h1>
+
+    <label for="serverUrl">服务端地址</label>
+    <input id="serverUrl" type="url" value="http://127.0.0.1:8080/upload-file" spellcheck="false">
+
+    <label>本地文件</label>
+    <div class="row">
+      <label class="file-button" for="fileInput">打开浏览本地文件</label>
+      <input id="fileInput" type="file">
+      <div id="fileName" class="file-name">未选择文件</div>
+    </div>
+
+    <label>上传方式</label>
+    <div class="mode" role="radiogroup" aria-label="上传方式">
+      <label>
+        <input type="radio" name="mode" value="multipart" checked>
+        <span>multipart/form-data</span>
+      </label>
+      <label>
+        <input type="radio" name="mode" value="raw">
+        <span>streaming body</span>
+      </label>
+    </div>
+
+    <label for="contentType">Content-Type</label>
+    <input id="contentType" type="text" value="application/octet-stream" spellcheck="false">
+
+    <div class="actions">
+      <button id="uploadButton" type="button">上传</button>
+      <button id="clearButton" class="secondary" type="button">清空结果</button>
+    </div>
+
+    <progress id="progress" value="0" max="100"></progress>
+    <pre id="output">等待上传...</pre>
+  </main>
+
+  <script>
+    const serverUrl = document.getElementById("serverUrl");
+    const fileInput = document.getElementById("fileInput");
+    const fileName = document.getElementById("fileName");
+    const contentType = document.getElementById("contentType");
+    const uploadButton = document.getElementById("uploadButton");
+    const clearButton = document.getElementById("clearButton");
+    const progress = document.getElementById("progress");
+    const output = document.getElementById("output");
+
+    function selectedMode() {
+      return document.querySelector("input[name='mode']:checked").value;
+    }
+
+    function appendFileName(url, name) {
+      const parsed = new URL(url);
+      if (!parsed.searchParams.has("name")) {
+        parsed.searchParams.set("name", name);
+      }
+      return parsed.toString();
+    }
+
+    function fileSummary(file) {
+      if (!file) {
+        return "未选择文件";
+      }
+      const mb = file.size / 1024 / 1024;
+      return `${file.name} (${mb.toFixed(2)} MiB)`;
+    }
+
+    function setOutput(value) {
+      output.textContent = value;
+    }
+
+    function upload() {
+      const file = fileInput.files[0];
+      if (!file) {
+        setOutput("请选择文件。");
+        return;
+      }
+
+      let target;
+      try {
+        target = selectedMode() === "raw"
+          ? appendFileName(serverUrl.value, file.name)
+          : new URL(serverUrl.value).toString();
+      } catch (error) {
+        setOutput(`服务端地址无效：${error.message}`);
+        return;
+      }
+
+      const xhr = new XMLHttpRequest();
+      xhr.open("POST", target);
+
+      let body;
+      if (selectedMode() === "multipart") {
+        body = new FormData();
+        body.append("file", file, file.name);
+      } else {
+        const type = contentType.value.trim() || file.type || "application/octet-stream";
+        xhr.setRequestHeader("Content-Type", type);
+        body = file;
+      }
+
+      uploadButton.disabled = true;
+      progress.value = 0;
+      setOutput(`POST ${target}\nmode=${selectedMode()}\nfile=${fileSummary(file)}\n\n上传中...`);
+
+      xhr.upload.onprogress = (event) => {
+        if (event.lengthComputable) {
+          progress.value = Math.round((event.loaded / event.total) * 100);
+        }
+      };
+
+      xhr.onload = () => {
+        progress.value = 100;
+        uploadButton.disabled = false;
+        const headers = xhr.getAllResponseHeaders();
+        setOutput(`status=${xhr.status} ${xhr.statusText}\n\n${headers}\n${xhr.responseText}`);
+      };
+
+      xhr.onerror = () => {
+        uploadButton.disabled = false;
+        setOutput("上传失败。请确认服务端已启动，并且 demo route 允许 CORS。");
+      };
+
+      xhr.onabort = () => {
+        uploadButton.disabled = false;
+        setOutput("上传已取消。");
+      };
+
+      xhr.send(body);
+    }
+
+    fileInput.addEventListener("change", () => {
+      const file = fileInput.files[0];
+      fileName.textContent = fileSummary(file);
+      if (file && file.type) {
+        contentType.value = file.type;
+      }
+    });
+
+    uploadButton.addEventListener("click", upload);
+    clearButton.addEventListener("click", () => {
+      progress.value = 0;
+      setOutput("等待上传...");
+    });
+  </script>
+</body>
+</html>

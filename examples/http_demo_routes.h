@@ -58,8 +58,16 @@ inline void send_text(oklib::http::HttpResponseWriter writer,
   auto response = writer.make_response();
   response.set_status_code(status);
   response.set_content_type(std::move(content_type));
+  response.add_header("Access-Control-Allow-Origin", "*");
   response.set_body(std::move(body));
   writer.send(std::move(response));
+}
+
+inline void add_upload_cors_headers(oklib::http::HttpResponse& response) {
+  response.add_header("Access-Control-Allow-Origin", "*");
+  response.add_header("Access-Control-Allow-Methods", "POST, OPTIONS");
+  response.add_header("Access-Control-Allow-Headers", "Content-Type");
+  response.add_header("Access-Control-Max-Age", "600");
 }
 
 inline std::string query_param(std::string_view query, std::string_view name) {
@@ -112,6 +120,7 @@ inline void send_upload_json(oklib::http::HttpResponseWriter writer,
   auto response = writer.make_response();
   response.set_status_code(201);
   response.set_content_type("application/json; charset=utf-8");
+  add_upload_cors_headers(response);
   response.set_body("{\"file\":\"" + json_escape(file_name) +
                     "\",\"path\":\"" + json_escape(path.string()) +
                     "\",\"content_type\":\"" + json_escape(content_type) +
@@ -260,6 +269,15 @@ inline void install_http_demo_routes(oklib::http::HttpServer& server,
   router.put_streaming("/echo", upload_handler);
   router.post_streaming("/stream-upload", upload_handler);
   router.put_streaming("/stream-upload", upload_handler);
+
+  router.options("/upload-file",
+                 [](const oklib::http::HttpRequest&,
+                    oklib::http::HttpResponseWriter writer) {
+                   auto response = writer.make_response();
+                   response.set_status_code(204);
+                   add_upload_cors_headers(response);
+                   writer.send(std::move(response));
+                 });
 
   router.post_streaming("/upload-file",
                         [](oklib::http::HttpRequest request,

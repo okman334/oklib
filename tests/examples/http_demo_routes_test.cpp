@@ -193,9 +193,50 @@ void test_upload_file_route_saves_multipart_mp4_file() {
           "multipart upload response includes file content type");
   require(response.find("\"bytes\":" + std::to_string(mp4_body.size())) != std::string::npos,
           "multipart upload response includes file byte count");
+  require(response.find("Access-Control-Allow-Origin: *") != std::string::npos,
+          "multipart upload response allows browser demo CORS");
   require(read_file(upload_path) == mp4_body, "uploaded mp4 body is saved byte-for-byte");
 
   std::filesystem::remove(upload_path);
+}
+
+void test_upload_file_route_handles_cors_preflight() {
+  oklib::net::EventLoop loop;
+  oklib::ThreadPool workers("http-demo-routes-cors-test-workers");
+  workers.start(1);
+
+  oklib::http::HttpServer server(&loop,
+                                 oklib::net::InetAddress::loopback(0),
+                                 "http-demo-routes-cors-test");
+  oklib::examples::install_http_demo_routes(server, workers);
+  server.start();
+
+  std::string response;
+  std::thread client([&] {
+    response = request_once(
+        "OPTIONS /upload-file HTTP/1.1\r\n"
+        "Host: localhost\r\n"
+        "Origin: http://127.0.0.1:4173\r\n"
+        "Access-Control-Request-Method: POST\r\n"
+        "Access-Control-Request-Headers: Content-Type\r\n"
+        "Connection: close\r\n\r\n",
+        server.listen_address(),
+        &loop,
+        [](const std::string& value) {
+          return value.find("Access-Control-Allow-Methods: POST, OPTIONS") != std::string::npos;
+        });
+  });
+  loop.run_after(std::chrono::seconds(2), [&] { loop.quit(); });
+  loop.loop();
+  client.join();
+  workers.stop();
+
+  require(response.find("HTTP/1.1 204 No Content") != std::string::npos,
+          "upload preflight returns 204");
+  require(response.find("Access-Control-Allow-Origin: *") != std::string::npos,
+          "upload preflight allows origin");
+  require(response.find("Access-Control-Allow-Headers: Content-Type") != std::string::npos,
+          "upload preflight allows content type header");
 }
 
 }  // namespace
@@ -204,5 +245,6 @@ int main() {
   test_ping_route_returns_pong();
   test_upload_file_route_saves_raw_jpeg_body();
   test_upload_file_route_saves_multipart_mp4_file();
+  test_upload_file_route_handles_cors_preflight();
   return 0;
 }
