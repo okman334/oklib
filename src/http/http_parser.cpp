@@ -18,6 +18,15 @@ bool is_ows(char c) noexcept {
   return c == ' ' || c == '\t';
 }
 
+std::size_t find_space(std::string_view value, std::size_t begin = 0) noexcept {
+  for (std::size_t i = begin; i < value.size(); ++i) {
+    if (value[i] == ' ') {
+      return i;
+    }
+  }
+  return std::string_view::npos;
+}
+
 bool is_token_char(char c) noexcept {
   const auto ch = static_cast<unsigned char>(c);
   if (std::isalnum(ch)) {
@@ -576,7 +585,7 @@ bool HttpParser::parse_request_line(std::string_view line, oklib::Timestamp rece
 }
 
 bool HttpParser::parse_response_line(std::string_view line) {
-  const auto first_space = line.find(' ');
+  const auto first_space = find_space(line);
   if (first_space == std::string_view::npos) {
     return set_error(HttpParseError::bad_start_line);
   }
@@ -586,9 +595,10 @@ bool HttpParser::parse_response_line(std::string_view line) {
     return set_error(HttpParseError::bad_start_line);
   }
 
-  std::string_view rest = line.substr(first_space + 1);
-  const auto second_space = rest.find(' ');
-  const auto status_token = second_space == std::string_view::npos ? rest : rest.substr(0, second_space);
+  const auto status_begin = first_space + 1;
+  const auto second_space = find_space(line, status_begin);
+  const auto status_end = second_space == std::string_view::npos ? line.size() : second_space;
+  const auto status_token = line.substr(status_begin, status_end - status_begin);
   if (status_token.size() != 3) {
     return set_error(HttpParseError::bad_start_line);
   }
@@ -604,7 +614,7 @@ bool HttpParser::parse_response_line(std::string_view line) {
   response_.version = version;
   response_.status_code = status;
   response_.reason_phrase =
-      second_space == std::string_view::npos ? std::string{} : std::string(rest.substr(second_space + 1));
+      second_space == std::string_view::npos ? std::string{} : std::string(line.substr(second_space + 1));
   return true;
 }
 
