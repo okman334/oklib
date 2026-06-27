@@ -200,6 +200,61 @@ void test_upload_file_route_saves_multipart_mp4_file() {
   std::filesystem::remove(upload_path);
 }
 
+void test_upload_file_route_decodes_percent_encoded_utf8_filename() {
+  const std::string file_name = "梨子芥菜 - 情网(烟嗓版).mp4";
+  const std::string encoded_name =
+      "%E6%A2%A8%E5%AD%90%E8%8A%A5%E8%8F%9C%20-%20"
+      "%E6%83%85%E7%BD%91%28%E7%83%9F%E5%97%93%E7%89%88%29.mp4";
+  const std::filesystem::path upload_path = std::filesystem::current_path() / "uploads" / file_name;
+  std::filesystem::remove(upload_path);
+
+  oklib::net::EventLoop loop;
+  oklib::ThreadPool workers("http-demo-routes-utf8-upload-test-workers");
+  workers.start(1);
+
+  oklib::http::HttpServer server(&loop,
+                                 oklib::net::InetAddress::loopback(0),
+                                 "http-demo-routes-utf8-upload-test");
+  oklib::examples::install_http_demo_routes(server, workers);
+  server.start();
+
+  const std::string boundary = "----oklib-demo-routes-utf8-boundary";
+  const std::string mp4_body = std::string("\0\0\0\x18", 4) + "ftypmp42oklib-utf8-demo";
+  const std::string multipart_body =
+      "--" + boundary + "\r\n"
+      "Content-Disposition: form-data; name=\"file\"; filename=\"" + encoded_name + "\"\r\n"
+      "Content-Type: video/mp4\r\n"
+      "\r\n" +
+      mp4_body +
+      "\r\n"
+      "--" + boundary + "--\r\n";
+  const std::string request =
+      "POST /upload-file HTTP/1.1\r\n"
+      "Host: localhost\r\n"
+      "Content-Type: multipart/form-data; boundary=" + boundary + "\r\n"
+      "Content-Length: " + std::to_string(multipart_body.size()) + "\r\n"
+      "Connection: close\r\n\r\n" +
+      multipart_body;
+
+  std::string response;
+  std::thread client([&] {
+    response = request_once(request, server.listen_address(), &loop);
+  });
+  loop.run_after(std::chrono::seconds(2), [&] { loop.quit(); });
+  loop.loop();
+  client.join();
+  workers.stop();
+
+  require(response.find("HTTP/1.1 201 Created") != std::string::npos,
+          "utf8 multipart upload route returns 201");
+  require(response.find("\"file\":\"" + file_name + "\"") != std::string::npos,
+          "utf8 multipart upload response includes decoded file name");
+  require(read_file(upload_path) == mp4_body,
+          "utf8 multipart upload body is saved under decoded file name");
+
+  std::filesystem::remove(upload_path);
+}
+
 void test_upload_file_route_handles_cors_preflight() {
   oklib::net::EventLoop loop;
   oklib::ThreadPool workers("http-demo-routes-cors-test-workers");
@@ -245,6 +300,7 @@ int main() {
   test_ping_route_returns_pong();
   test_upload_file_route_saves_raw_jpeg_body();
   test_upload_file_route_saves_multipart_mp4_file();
+  test_upload_file_route_decodes_percent_encoded_utf8_filename();
   test_upload_file_route_handles_cors_preflight();
   return 0;
 }

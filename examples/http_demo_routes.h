@@ -1,7 +1,6 @@
 #pragma once
 
 #include <chrono>
-#include <cctype>
 #include <filesystem>
 #include <fstream>
 #include <memory>
@@ -87,7 +86,62 @@ inline std::string query_param(std::string_view query, std::string_view name) {
   return {};
 }
 
+inline int hex_digit_value(char ch) {
+  if (ch >= '0' && ch <= '9') {
+    return ch - '0';
+  }
+  if (ch >= 'a' && ch <= 'f') {
+    return ch - 'a' + 10;
+  }
+  if (ch >= 'A' && ch <= 'F') {
+    return ch - 'A' + 10;
+  }
+  return -1;
+}
+
+inline std::string percent_decode_file_name(std::string_view file_name) {
+  std::string decoded;
+  decoded.reserve(file_name.size());
+  for (std::size_t i = 0; i < file_name.size(); ++i) {
+    if (file_name[i] == '%' && i + 2 < file_name.size()) {
+      const int high = hex_digit_value(file_name[i + 1]);
+      const int low = hex_digit_value(file_name[i + 2]);
+      if (high >= 0 && low >= 0) {
+        decoded.push_back(static_cast<char>((high << 4) | low));
+        i += 2;
+        continue;
+      }
+    }
+    decoded.push_back(file_name[i]);
+  }
+  return decoded;
+}
+
+inline bool is_safe_upload_file_name_byte(unsigned char value) {
+  if (value >= 0x80) {
+    return true;
+  }
+  if (value < 0x20 || value == 0x7f) {
+    return false;
+  }
+  switch (static_cast<char>(value)) {
+    case '/':
+    case '\\':
+    case ':':
+    case '*':
+    case '?':
+    case '"':
+    case '<':
+    case '>':
+    case '|':
+      return false;
+    default:
+      return true;
+  }
+}
+
 inline std::string sanitized_upload_file_name(std::string file_name) {
+  file_name = percent_decode_file_name(file_name);
   if (file_name.empty()) {
     file_name = "upload.bin";
   }
@@ -96,7 +150,7 @@ inline std::string sanitized_upload_file_name(std::string file_name) {
   sanitized.reserve(file_name.size());
   for (char ch : file_name) {
     const auto value = static_cast<unsigned char>(ch);
-    if (std::isalnum(value) || ch == '.' || ch == '_' || ch == '-') {
+    if (is_safe_upload_file_name_byte(value)) {
       sanitized.push_back(ch);
     } else {
       sanitized.push_back('_');
