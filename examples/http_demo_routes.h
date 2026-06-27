@@ -1,9 +1,12 @@
 #pragma once
 
 #include <chrono>
+#include <condition_variable>
+#include <deque>
 #include <filesystem>
 #include <fstream>
 #include <memory>
+#include <mutex>
 #include <sstream>
 #include <string>
 #include <string_view>
@@ -133,6 +136,24 @@ inline void send_upload_json(oklib::http::HttpResponseWriter writer,
   writer.send(std::move(response));
 }
 
+inline void send_worker_upload_json(oklib::http::HttpResponseWriter writer,
+                                    std::string_view file_name,
+                                    const std::filesystem::path& path,
+                                    std::size_t bytes,
+                                    std::string_view content_type) {
+  auto response = writer.make_response();
+  response.set_status_code(201);
+  response.set_content_type("application/json; charset=utf-8");
+  response.add_header("X-Worker", "oklib-thread-pool");
+  add_upload_cors_headers(response);
+  response.set_body("{\"file\":\"" + json_escape(file_name) +
+                    "\",\"path\":\"" + json_escape(path.string()) +
+                    "\",\"content_type\":\"" + json_escape(content_type) +
+                    "\",\"mode\":\"worker\"" +
+                    ",\"bytes\":" + std::to_string(bytes) + "}\n");
+  writer.send(std::move(response));
+}
+
 inline bool save_upload_body(const std::filesystem::path& upload_dir,
                              const std::filesystem::path& path,
                              std::string_view body) {
@@ -150,6 +171,95 @@ inline bool save_upload_body(const std::filesystem::path& upload_dir,
   return static_cast<bool>(file);
 }
 
+struct WorkerUploadState {
+  WorkerUploadState(std::filesystem::path upload_dir_arg,
+                    std::filesystem::path path_arg,
+                    std::string file_name_arg,
+                    std::string content_type_arg,
+                    oklib::http::HttpResponseWriter writer_arg)
+      : upload_dir(std::move(upload_dir_arg)),
+        path(std::move(path_arg)),
+        file_name(std::move(file_name_arg)),
+        content_type(std::move(content_type_arg)),
+        writer(std::move(writer_arg)) {}
+
+  void enqueue(std::string chunk) {
+    {
+      std::lock_guard lock(mutex);
+      chunks.push_back(std::move(chunk));
+    }
+    cv.notify_one();
+  }
+
+  void finish() {
+    {
+      std::lock_guard lock(mutex);
+      completed = true;
+    }
+    cv.notify_one();
+  }
+
+  void run() {
+    std::error_code ec;
+    std::filesystem::create_directories(upload_dir, ec);
+    bool ok = !ec;
+
+    std::ofstream file;
+    if (ok) {
+      file.open(path, std::ios::binary | std::ios::trunc);
+      ok = file.is_open();
+    }
+
+    for (;;) {
+      std::string chunk;
+      {
+        std::unique_lock lock(mutex);
+        cv.wait(lock, [this] { return completed || !chunks.empty(); });
+        if (!chunks.empty()) {
+          chunk = std::move(chunks.front());
+          chunks.pop_front();
+        } else if (completed) {
+          break;
+        }
+      }
+
+      if (!ok) {
+        continue;
+      }
+
+      file.write(chunk.data(), static_cast<std::streamsize>(chunk.size()));
+      bytes += chunk.size();
+      if (!file) {
+        ok = false;
+      }
+    }
+
+    if (file.is_open()) {
+      file.close();
+      ok = ok && static_cast<bool>(file);
+    }
+
+    if (!ok) {
+      send_text(std::move(writer), 500, "failed to save upload\n");
+      return;
+    }
+
+    send_worker_upload_json(std::move(writer), file_name, path, bytes, content_type);
+  }
+
+  std::filesystem::path upload_dir;
+  std::filesystem::path path;
+  std::string file_name;
+  std::string content_type;
+  oklib::http::HttpResponseWriter writer;
+
+  std::mutex mutex;
+  std::condition_variable cv;
+  std::deque<std::string> chunks;
+  bool completed{false};
+  std::size_t bytes{0};
+};
+
 inline void install_http_demo_routes(oklib::http::HttpServer& server,
                                      oklib::ThreadPool& workers) {
   oklib::http::HttpRouter router;
@@ -160,6 +270,7 @@ inline void install_http_demo_routes(oklib::http::HttpServer& server,
               "oklib HTTP demo\n"
               "routes: GET /ping, GET /headers, GET /query?name=oklib, POST /echo, "
               "POST /stream-upload, POST /upload-file?name=photo.jpg, "
+              "POST /upload-file-worker?name=photo.jpg, "
               "GET /async, GET /chunks, GET /cache\n");
   });
 
@@ -284,6 +395,15 @@ inline void install_http_demo_routes(oklib::http::HttpServer& server,
                    writer.send(std::move(response));
                  });
 
+  router.options("/upload-file-worker",
+                 [](const oklib::http::HttpRequest&,
+                    oklib::http::HttpResponseWriter writer) {
+                   auto response = writer.make_response();
+                   response.set_status_code(204);
+                   add_upload_cors_headers(response);
+                   writer.send(std::move(response));
+                 });
+
   router.post_streaming("/upload-file",
                         [](oklib::http::HttpRequest request,
                            oklib::http::HttpRequestBodyStream body_stream,
@@ -394,6 +514,38 @@ inline void install_http_demo_routes(oklib::http::HttpServer& server,
                                                  *bytes,
                                                  request_content_type);
                               });
+                        });
+
+  router.post_streaming("/upload-file-worker",
+                        [&workers](oklib::http::HttpRequest request,
+                                   oklib::http::HttpRequestBodyStream body_stream,
+                                   oklib::http::HttpResponseWriter writer) {
+                          if (oklib::http::content_type_from_string(request.header("Content-Type")) ==
+                              oklib::http::ContentType::multipart_form_data) {
+                            send_text(std::move(writer),
+                                      415,
+                                      "worker upload demo supports raw request bodies only\n");
+                            return;
+                          }
+
+                          const auto upload_dir = std::filesystem::path("uploads");
+                          auto file_name = sanitized_upload_file_name(
+                              request.query_param("name").value_or(std::string{}));
+                          auto path = upload_dir / file_name;
+                          auto state = std::make_shared<WorkerUploadState>(
+                              upload_dir,
+                              path,
+                              std::move(file_name),
+                              request.header("Content-Type"),
+                              std::move(writer));
+
+                          workers.run([state] { state->run(); });
+                          body_stream.set_data_callback([state](std::string_view chunk) {
+                            state->enqueue(std::string(chunk));
+                          });
+                          body_stream.set_complete_callback([state] {
+                            state->finish();
+                          });
                         });
 
   server.set_router(router);

@@ -255,6 +255,52 @@ void test_upload_file_route_decodes_percent_encoded_utf8_filename() {
   std::filesystem::remove(upload_path);
 }
 
+void test_upload_file_worker_route_saves_raw_body() {
+  const std::string file_name = "oklib-demo-routes-worker-upload-test.bin";
+  const std::filesystem::path upload_path = std::filesystem::current_path() / "uploads" / file_name;
+  std::filesystem::remove(upload_path);
+
+  oklib::net::EventLoop loop;
+  oklib::ThreadPool workers("http-demo-routes-worker-upload-test-workers");
+  workers.start(2);
+
+  oklib::http::HttpServer server(&loop,
+                                 oklib::net::InetAddress::loopback(0),
+                                 "http-demo-routes-worker-upload-test");
+  oklib::examples::install_http_demo_routes(server, workers);
+  server.start();
+
+  const std::string body = "worker-upload-body-0123456789";
+  const std::string request =
+      "POST /upload-file-worker?name=" + file_name + " HTTP/1.1\r\n"
+      "Host: localhost\r\n"
+      "Content-Type: application/octet-stream\r\n"
+      "Content-Length: " + std::to_string(body.size()) + "\r\n"
+      "Connection: close\r\n\r\n" +
+      body;
+
+  std::string response;
+  std::thread client([&] {
+    response = request_once(request, server.listen_address(), &loop);
+  });
+  loop.run_after(std::chrono::seconds(2), [&] { loop.quit(); });
+  loop.loop();
+  client.join();
+  workers.stop();
+
+  require(response.find("HTTP/1.1 201 Created") != std::string::npos,
+          "worker upload route returns 201");
+  require(response.find("\"file\":\"" + file_name + "\"") != std::string::npos,
+          "worker upload response includes file name");
+  require(response.find("\"mode\":\"worker\"") != std::string::npos,
+          "worker upload response identifies worker mode");
+  require(response.find("\"bytes\":" + std::to_string(body.size())) != std::string::npos,
+          "worker upload response includes byte count");
+  require(read_file(upload_path) == body, "worker uploaded body is saved byte-for-byte");
+
+  std::filesystem::remove(upload_path);
+}
+
 void test_upload_file_route_handles_cors_preflight() {
   oklib::net::EventLoop loop;
   oklib::ThreadPool workers("http-demo-routes-cors-test-workers");
@@ -301,6 +347,7 @@ int main() {
   test_upload_file_route_saves_raw_jpeg_body();
   test_upload_file_route_saves_multipart_mp4_file();
   test_upload_file_route_decodes_percent_encoded_utf8_filename();
+  test_upload_file_worker_route_saves_raw_body();
   test_upload_file_route_handles_cors_preflight();
   return 0;
 }
