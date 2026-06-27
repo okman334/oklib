@@ -69,7 +69,9 @@
     }
 
     .file-name {
-      min-height: 24px;
+      min-height: 40px;
+      display: inline-flex;
+      align-items: center;
       color: #5b6470;
       font-size: 14px;
       overflow-wrap: anywhere;
@@ -117,12 +119,17 @@
       font: inherit;
       font-weight: 700;
       cursor: pointer;
+      margin: 0;
     }
 
     button.secondary,
     .file-button {
       background: #ffffff;
       color: #1769e0;
+
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
     }
 
     button:disabled {
@@ -265,9 +272,11 @@
         return;
       }
 
+      const mode = selectedMode();
+
       let target;
       try {
-        target = selectedMode() === "raw"
+        target = mode === "raw"
           ? appendFileName(serverUrl.value, file.name)
           : new URL(serverUrl.value).toString();
       } catch (error) {
@@ -278,41 +287,120 @@
       const xhr = new XMLHttpRequest();
       xhr.open("POST", target);
 
+      const requestHeaders = {};
       let body;
-      if (selectedMode() === "multipart") {
+      let bodyDescription = "";
+
+      if (mode === "multipart") {
         body = new FormData();
         body.append("file", file, file.name);
+
+        bodyDescription =
+          `FormData:\n` +
+          `  field name: file\n` +
+          `  filename: ${file.name}\n` +
+          `  file type: ${file.type || "(empty)"}\n` +
+          `  file size: ${file.size} bytes\n` +
+          `  last modified: ${new Date(file.lastModified).toISOString()}\n\n` +
+          `说明：multipart/form-data 的 Content-Type 和 boundary 由浏览器自动生成，JS 无法在 send 前完整读取最终请求体。`;
       } else {
         const type = contentType.value.trim() || file.type || "application/octet-stream";
         xhr.setRequestHeader("Content-Type", type);
+        requestHeaders["Content-Type"] = type;
         body = file;
+
+        bodyDescription =
+          `Raw file body:\n` +
+          `  filename: ${file.name}\n` +
+          `  file type: ${file.type || "(empty)"}\n` +
+          `  file size: ${file.size} bytes\n` +
+          `  last modified: ${new Date(file.lastModified).toISOString()}`;
+      }
+
+      function requestInfo() {
+        const headersText = Object.keys(requestHeaders).length
+          ? Object.entries(requestHeaders)
+              .map(([key, value]) => `  ${key}: ${value}`)
+              .join("\n")
+          : "  浏览器自动生成，例如 multipart boundary / Content-Length / Origin 等";
+
+        return (
+          `========== Request ==========\n` +
+          `method: POST\n` +
+          `url: ${target}\n` +
+          `upload mode: ${mode}\n\n` +
+          `headers:\n${headersText}\n\n` +
+          `body:\n${bodyDescription}`
+        );
       }
 
       uploadButton.disabled = true;
       progress.value = 0;
-      setOutput(`POST ${target}\nmode=${selectedMode()}\nfile=${fileSummary(file)}\n\n上传中...`);
+
+      setOutput(
+        `${requestInfo()}\n\n` +
+        `========== Progress ==========\n` +
+        `上传中...`
+      );
 
       xhr.upload.onprogress = (event) => {
         if (event.lengthComputable) {
-          progress.value = Math.round((event.loaded / event.total) * 100);
+          const percent = Math.round((event.loaded / event.total) * 100);
+          progress.value = percent;
+
+          setOutput(
+            `${requestInfo()}\n\n` +
+            `========== Progress ==========\n` +
+            `loaded: ${event.loaded} bytes\n` +
+            `total: ${event.total} bytes\n` +
+            `percent: ${percent}%\n\n` +
+            `上传中...`
+          );
         }
       };
 
       xhr.onload = () => {
         progress.value = 100;
         uploadButton.disabled = false;
-        const headers = xhr.getAllResponseHeaders();
-        setOutput(`status=${xhr.status} ${xhr.statusText}\n\n${headers}\n${xhr.responseText}`);
+
+        const responseHeaders = xhr.getAllResponseHeaders().trim() || "(无响应头)";
+        const responseBody = xhr.responseText || "(空响应体)";
+        const ok = xhr.status >= 200 && xhr.status < 300;
+
+        setOutput(
+          `${requestInfo()}\n\n` +
+          `========== Response ==========\n` +
+          `status: ${xhr.status}\n` +
+          `statusText: ${xhr.statusText || "(empty)"}\n` +
+          `ok: ${ok}\n\n` +
+          `headers:\n${responseHeaders}\n\n` +
+          `body:\n${responseBody}`
+        );
       };
 
       xhr.onerror = () => {
         uploadButton.disabled = false;
-        setOutput("上传失败。请确认服务端已启动，并且 demo route 允许 CORS。");
+
+        setOutput(
+          `${requestInfo()}\n\n` +
+          `========== Error ==========\n` +
+          `网络错误，浏览器没有拿到有效 HTTP 响应。\n` +
+          `可能原因：服务端未启动、CORS 被拦截、连接失败、DNS/TLS/端口错误。\n\n` +
+          `status: ${xhr.status}\n` +
+          `statusText: ${xhr.statusText || "(empty)"}`
+        );
       };
 
       xhr.onabort = () => {
         uploadButton.disabled = false;
-        setOutput("上传已取消。");
+
+        setOutput(
+          `${requestInfo()}\n\n` +
+          `========== Abort ==========\n` +
+          `上传已取消。\n\n` +
+          `status: ${xhr.status}\n` +
+          `statusText: ${xhr.statusText || "(empty)"}`
+        );
       };
 
       xhr.send(body);
