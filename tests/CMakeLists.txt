@@ -110,3 +110,8 @@ add_executable(oklib_http_demo_routes_test examples/http_demo_routes_test.cpp)
 target_include_directories(oklib_http_demo_routes_test PRIVATE ${PROJECT_SOURCE_DIR}/examples)
 target_link_libraries(oklib_http_demo_routes_test PRIVATE oklib::http)
 add_test(NAME oklib.example.http_demo_routes COMMAND oklib_http_demo_routes_test)
+
+add_executable(oklib_socks5_protocol_test examples/socks5_protocol_test.cpp)
+target_include_directories(oklib_socks5_protocol_test PRIVATE ${PROJECT_SOURCE_DIR}/examples)
+target_link_libraries(oklib_socks5_protocol_test PRIVATE oklib::net)
+add_test(NAME oklib.example.socks5_protocol COMMAND oklib_socks5_protocol_test)
