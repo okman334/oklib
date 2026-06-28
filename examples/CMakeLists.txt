@@ -13,6 +13,9 @@ target_link_libraries(oklib_http_sync_client_demo PRIVATE oklib::http)
 add_executable(oklib_http_benchmark http_benchmark.cpp)
 target_link_libraries(oklib_http_benchmark PRIVATE oklib::http)
 
+add_executable(oklib_http_upload_benchmark http_upload_benchmark.cpp)
+target_link_libraries(oklib_http_upload_benchmark PRIVATE oklib::http)
+
 add_executable(oklib_websocket_server websocket_server.cpp)
 target_link_libraries(oklib_websocket_server PRIVATE oklib::websocket)
 

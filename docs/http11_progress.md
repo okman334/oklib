@@ -2,9 +2,12 @@
 
 ## Current Phase
 
-- Phase D complete.
-  - Post-plan sync client increment complete.
-  - Next scope: choose the next HTTP scope such as stricter RFC fuzz/boundary coverage, cache refinements, TLS polish, external benchmark comparison, or DNS/proxy support for the synchronous client.
+- Production upload pipeline complete on branch `codex/production-upload-pipeline`.
+  - Added TCP/HTTP read pause/resume hooks and streaming cancellation callbacks.
+  - Added `UploadFileWriterPool` with reusable blocks, per-upload/global queue limits, `.part` rename, cancellation cleanup, watermarks, and stats.
+  - Added `StreamingMultipartParser` and wired `/upload-file-worker` to raw and multipart streaming uploads.
+  - Added upload benchmark and `docs/upload_pipeline.md`.
+  - Next scope: harden timeout policy in application routes, add more malformed multipart boundary cases, and run external benchmark comparisons.
 
 ## Completed Phases
 
