@@ -171,6 +171,9 @@ inline RequestParseResult parse_connect_request(std::string_view data) {
                               10};
   }
   if (address_type == 0x03) {
+    if (data.size() < 5) {
+      return {};
+    }
     const auto domain_len = static_cast<std::uint8_t>(data[4]);
     if (domain_len == 0) {
       return RequestParseResult{ParseStatus::error, ReplyCode::general_failure,

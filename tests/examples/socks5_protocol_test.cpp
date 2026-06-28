@@ -73,6 +73,10 @@ int main() {
   require(domain.consumed == 18,
           "domain request consumes exact request length");
 
+  auto domain_prefix = parse_connect_request(bytes({0x05, 0x01, 0x00, 0x03}));
+  require(domain_prefix.status == ParseStatus::need_more,
+          "domain request without length waits for more bytes");
+
   auto short_request =
       parse_connect_request(bytes({0x05, 0x01, 0x00, 0x03, 11, 'e'}));
   require(short_request.status == ParseStatus::need_more,
