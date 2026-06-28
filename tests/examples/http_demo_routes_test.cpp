@@ -31,7 +31,8 @@ void require(bool condition, const char* message) {
 std::string request_once(const std::string& request,
                          const oklib::net::InetAddress& address,
                          oklib::net::EventLoop* loop,
-                         const std::function<bool(const std::string&)>& done = {}) {
+                         const std::function<bool(const std::string&)>& done = {},
+                         bool quit_loop = true) {
   int fd = ::socket(AF_INET, SOCK_STREAM, 0);
   require(fd >= 0, "socket succeeds");
   require(::connect(fd, address.sockaddr_ptr(), address.length()) == 0, "connect succeeds");
@@ -56,7 +57,9 @@ std::string request_once(const std::string& request,
     }
   }
   ::close(fd);
-  loop->queue_in_loop([loop] { loop->quit(); });
+  if (quit_loop) {
+    loop->queue_in_loop([loop] { loop->quit(); });
+  }
   return response;
 }
 
@@ -137,6 +140,62 @@ void test_upload_file_route_saves_raw_jpeg_body() {
   require(read_file(upload_path) == jpg_body, "uploaded jpg body is saved byte-for-byte");
 
   std::filesystem::remove(upload_path);
+}
+
+void test_upload_file_route_keeps_existing_raw_uploads_by_default() {
+  const std::string file_name = "oklib-demo-routes-raw-duplicate.bin";
+  const std::string second_file_name = "oklib-demo-routes-raw-duplicate-1.bin";
+  const auto upload_dir = std::filesystem::current_path() / "uploads";
+  const auto first_path = upload_dir / file_name;
+  const auto second_path = upload_dir / second_file_name;
+  std::filesystem::remove(first_path);
+  std::filesystem::remove(second_path);
+
+  oklib::net::EventLoop loop;
+  oklib::ThreadPool workers("http-demo-routes-raw-duplicate-test-workers");
+  workers.start(1);
+
+  oklib::http::HttpServer server(&loop,
+                                 oklib::net::InetAddress::loopback(0),
+                                 "http-demo-routes-raw-duplicate-test");
+  oklib::examples::install_http_demo_routes(server, workers);
+  server.start();
+
+  const auto make_request = [&](std::string_view body) {
+    return "POST /upload-file?name=" + file_name + " HTTP/1.1\r\n"
+           "Host: localhost\r\n"
+           "Content-Type: application/octet-stream\r\n"
+           "Content-Length: " + std::to_string(body.size()) + "\r\n"
+           "Connection: close\r\n\r\n" +
+           std::string(body);
+  };
+
+  std::string first_response;
+  std::string second_response;
+  std::thread client([&] {
+    first_response =
+        request_once(make_request("first"), server.listen_address(), &loop, {}, false);
+    second_response =
+        request_once(make_request("second"), server.listen_address(), &loop);
+  });
+  loop.run_after(std::chrono::seconds(2), [&] { loop.quit(); });
+  loop.loop();
+  client.join();
+  workers.stop();
+
+  require(first_response.find("HTTP/1.1 201 Created") != std::string::npos,
+          "first raw duplicate upload returns 201");
+  require(second_response.find("HTTP/1.1 201 Created") != std::string::npos,
+          "second raw duplicate upload returns 201");
+  require(first_response.find("\"file\":\"" + file_name + "\"") != std::string::npos,
+          "first raw duplicate keeps requested file name");
+  require(second_response.find("\"file\":\"" + second_file_name + "\"") != std::string::npos,
+          "second raw duplicate receives unique file name");
+  require(read_file(first_path) == "first", "first raw duplicate body remains saved");
+  require(read_file(second_path) == "second", "second raw duplicate body saved separately");
+
+  std::filesystem::remove(first_path);
+  std::filesystem::remove(second_path);
 }
 
 void test_upload_file_route_saves_multipart_mp4_file() {
@@ -401,6 +460,7 @@ void test_upload_file_route_handles_cors_preflight() {
 int main() {
   test_ping_route_returns_pong();
   test_upload_file_route_saves_raw_jpeg_body();
+  test_upload_file_route_keeps_existing_raw_uploads_by_default();
   test_upload_file_route_saves_multipart_mp4_file();
   test_upload_file_route_decodes_percent_encoded_utf8_filename();
   test_upload_file_worker_route_saves_raw_body();

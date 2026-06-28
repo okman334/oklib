@@ -121,7 +121,11 @@ void HttpRequestBodyStream::on_complete() const {
   CompleteCallback callback;
   {
     std::lock_guard lock(state_->mutex);
-    callback = state_->complete_callback;
+    callback = std::move(state_->complete_callback);
+    state_->data_callback = {};
+    state_->cancel_callback = {};
+    state_->pause_callback = {};
+    state_->resume_callback = {};
   }
   if (callback) {
     callback();
@@ -143,7 +147,11 @@ void HttpRequestBodyStream::on_cancel() const {
   CancelCallback callback;
   {
     std::lock_guard lock(state_->mutex);
-    callback = state_->cancel_callback;
+    callback = std::move(state_->cancel_callback);
+    state_->data_callback = {};
+    state_->complete_callback = {};
+    state_->pause_callback = {};
+    state_->resume_callback = {};
   }
   if (callback) {
     callback();

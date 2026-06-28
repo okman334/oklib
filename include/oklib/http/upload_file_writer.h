@@ -22,11 +22,13 @@ struct UploadFileWriterOptions {
   std::size_t low_watermark{4 * 1024 * 1024};
   std::uint64_t max_upload_size{1024ull * 1024ull * 1024ull};
   std::chrono::milliseconds timeout{std::chrono::minutes(5)};
+  bool overwrite_existing{false};
 };
 
 struct UploadFileWriterPoolOptions {
   std::size_t max_active_uploads{128};
   std::size_t max_total_queued_bytes{512 * 1024 * 1024};
+  std::size_t max_cached_block_bytes{32 * 1024 * 1024};
 };
 
 struct UploadFileWriterResult {

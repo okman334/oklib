@@ -18,8 +18,11 @@
 #include <fstream>
 #include <iostream>
 #include <iterator>
+#include <memory>
+#include <mutex>
 #include <string>
 #include <thread>
+#include <vector>
 
 namespace {
 
@@ -100,6 +103,100 @@ void test_upload_writer_writes_part_then_renames() {
   std::filesystem::remove(final_path);
 }
 
+void test_upload_writer_assigns_unique_paths_for_concurrent_same_name_uploads() {
+  const auto dir = std::filesystem::current_path() / "uploads";
+  const auto first_path = dir / "upload.bin";
+  const auto second_path = dir / "upload-1.bin";
+  std::filesystem::remove(first_path);
+  std::filesystem::remove(second_path);
+  std::filesystem::remove(first_path.string() + ".part");
+  std::filesystem::remove(second_path.string() + ".part");
+
+  oklib::http::UploadFileWriterPool pool;
+  pool.start(2);
+
+  std::mutex mutex;
+  std::vector<oklib::http::UploadFileWriterResult> results;
+  auto completion = [&](oklib::http::UploadFileWriterResult result) {
+    std::lock_guard lock(mutex);
+    results.push_back(std::move(result));
+  };
+
+  oklib::http::UploadFileWriterOptions options;
+  options.upload_dir = dir;
+
+  auto first = pool.create_session(options, completion);
+  auto second = pool.create_session(options, completion);
+
+  require(first != nullptr, "first same-name session created");
+  require(second != nullptr, "second same-name session created");
+  require(first->append("first"), "first body appended");
+  require(second->append("second"), "second body appended");
+  first->finish();
+  second->finish();
+  first->wait_for_test();
+  second->wait_for_test();
+  pool.stop();
+
+  require(results.size() == 2, "both same-name uploads completed");
+  require(results[0].ok && results[1].ok, "both same-name uploads succeeded");
+  require(results[0].path != results[1].path, "same-name uploads receive unique paths");
+  require(std::filesystem::exists(results[0].path), "first unique upload path exists");
+  require(std::filesystem::exists(results[1].path), "second unique upload path exists");
+
+  const auto first_body = read_file(results[0].path);
+  const auto second_body = read_file(results[1].path);
+  require((first_body == "first" && second_body == "second") ||
+              (first_body == "second" && second_body == "first"),
+          "same-name upload bodies are not mixed");
+  require((results[0].file_name == "upload.bin" && results[1].file_name == "upload-1.bin") ||
+              (results[0].file_name == "upload-1.bin" && results[1].file_name == "upload.bin"),
+          "same-name uploads report unique file names");
+
+  std::filesystem::remove(results[0].path);
+  std::filesystem::remove(results[1].path);
+}
+
+void test_upload_writer_can_overwrite_existing_file_when_requested() {
+  const auto dir = std::filesystem::current_path() / "uploads";
+  const auto final_path = dir / "overwrite-existing.bin";
+  std::filesystem::create_directories(dir);
+  {
+    std::ofstream file(final_path, std::ios::binary | std::ios::trunc);
+    require(file.is_open(), "existing overwrite target opens");
+    file << "old";
+  }
+  std::filesystem::remove(dir / "overwrite-existing-1.bin");
+
+  oklib::http::UploadFileWriterPool pool;
+  pool.start(1);
+
+  oklib::http::UploadFileWriterOptions options;
+  options.upload_dir = dir;
+  options.file_name = "overwrite-existing.bin";
+  options.overwrite_existing = true;
+
+  oklib::http::UploadFileWriterResult result;
+  auto session = pool.create_session(options, [&](oklib::http::UploadFileWriterResult value) {
+    result = std::move(value);
+  });
+
+  require(session != nullptr, "overwrite session created");
+  require(session->append("new"), "overwrite body appended");
+  session->finish();
+  session->wait_for_test();
+  pool.stop();
+
+  require(result.ok, "overwrite upload succeeds");
+  require(result.file_name == "overwrite-existing.bin", "overwrite keeps requested file name");
+  require(result.path == final_path, "overwrite writes requested final path");
+  require(read_file(final_path) == "new", "overwrite replaces existing file");
+  require(!std::filesystem::exists(dir / "overwrite-existing-1.bin"),
+          "overwrite does not allocate unique backup name");
+
+  std::filesystem::remove(final_path);
+}
+
 void test_upload_writer_cancel_removes_part_file() {
   const auto dir = std::filesystem::current_path() / "uploads";
   const auto final_path = dir / "cancel-test.bin";
@@ -153,6 +250,84 @@ void test_upload_writer_reuses_blocks_for_many_small_chunks() {
   require(session->bytes_written() == 4096, "all small chunks were written");
 
   std::filesystem::remove(final_path);
+}
+
+void test_upload_writer_reuses_blocks_across_finished_sessions() {
+  const auto dir = std::filesystem::current_path() / "uploads";
+  const auto first_path = dir / "cross-session-reuse-a.bin";
+  const auto second_path = dir / "cross-session-reuse-b.bin";
+  std::filesystem::remove(first_path);
+  std::filesystem::remove(second_path);
+
+  oklib::http::UploadFileWriterPool pool;
+  pool.start(1);
+
+  oklib::http::UploadFileWriterOptions options;
+  options.upload_dir = dir;
+  options.file_name = "cross-session-reuse-a.bin";
+  options.block_size = 1024;
+  auto first = pool.create_session(options);
+  require(first != nullptr, "first cross-session reuse session created");
+  require(first->append(std::string(4096, 'a')), "first cross-session body appended");
+  first->finish();
+  first->wait_for_test();
+  require(first->debug_blocks_allocated_for_test() == 4,
+          "first cross-session upload allocates expected blocks");
+
+  options.file_name = "cross-session-reuse-b.bin";
+  auto second = pool.create_session(options);
+  require(second != nullptr, "second cross-session reuse session created");
+  require(second->append(std::string(4096, 'b')), "second cross-session body appended");
+  second->finish();
+  second->wait_for_test();
+  pool.stop();
+
+  require(second->debug_blocks_allocated_for_test() == 0,
+          "second cross-session upload reuses pool cached blocks");
+  require(read_file(first_path) == std::string(4096, 'a'),
+          "first cross-session body saved");
+  require(read_file(second_path) == std::string(4096, 'b'),
+          "second cross-session body saved");
+
+  std::filesystem::remove(first_path);
+  std::filesystem::remove(second_path);
+}
+
+void test_upload_writer_pool_cache_size_can_be_disabled() {
+  const auto dir = std::filesystem::current_path() / "uploads";
+  const auto first_path = dir / "disabled-cache-a.bin";
+  const auto second_path = dir / "disabled-cache-b.bin";
+  std::filesystem::remove(first_path);
+  std::filesystem::remove(second_path);
+
+  oklib::http::UploadFileWriterPoolOptions pool_options;
+  pool_options.max_cached_block_bytes = 0;
+  oklib::http::UploadFileWriterPool pool(pool_options);
+  pool.start(1);
+
+  oklib::http::UploadFileWriterOptions options;
+  options.upload_dir = dir;
+  options.file_name = "disabled-cache-a.bin";
+  options.block_size = 1024;
+  auto first = pool.create_session(options);
+  require(first != nullptr, "first disabled-cache session created");
+  require(first->append(std::string(4096, 'a')), "first disabled-cache body appended");
+  first->finish();
+  first->wait_for_test();
+
+  options.file_name = "disabled-cache-b.bin";
+  auto second = pool.create_session(options);
+  require(second != nullptr, "second disabled-cache session created");
+  require(second->append(std::string(4096, 'b')), "second disabled-cache body appended");
+  second->finish();
+  second->wait_for_test();
+  pool.stop();
+
+  require(second->debug_blocks_allocated_for_test() == 4,
+          "disabled pool cache forces second session to allocate blocks");
+
+  std::filesystem::remove(first_path);
+  std::filesystem::remove(second_path);
 }
 
 void test_upload_writer_watermarks_fire_once_per_transition() {
@@ -314,14 +489,72 @@ void test_stream_pause_resume_and_cancel() {
   require(canceled.load(), "stream cancel callback runs on client disconnect");
 }
 
+void test_stream_callbacks_release_self_references_after_complete() {
+  using namespace std::chrono_literals;
+
+  oklib::net::EventLoop loop;
+  std::weak_ptr<int> marker;
+
+  oklib::http::HttpServer server(&loop,
+                                 oklib::net::InetAddress::loopback(0),
+                                 "http-stream-release-test");
+  server.set_streaming_http_callback(
+      [&](oklib::http::HttpRequest,
+          oklib::http::HttpRequestBodyStream body,
+          oklib::http::HttpResponseWriter writer) mutable {
+        auto owned_marker = std::make_shared<int>(42);
+        marker = owned_marker;
+        body.set_data_callback([body, owned_marker](std::string_view) {
+          (void)body.reading_paused();
+          (void)owned_marker;
+        });
+        body.set_complete_callback(
+            [body, owned_marker, writer = std::move(writer)]() mutable {
+              (void)body.reading_paused();
+              (void)owned_marker;
+              auto response = writer.make_response();
+              response.set_status_code(200);
+              response.set_body("ok");
+              writer.send(std::move(response));
+            });
+      });
+  server.start();
+
+  std::string response;
+  std::thread client([&] {
+    const int fd = connect_socket(server.listen_address());
+    write_all(fd,
+              "POST /release HTTP/1.1\r\n"
+              "Host: localhost\r\n"
+              "Content-Length: 4\r\n"
+              "Connection: close\r\n\r\n"
+              "body");
+    response = read_response_until_close(fd);
+    ::close(fd);
+  });
+
+  loop.run_after(500ms, [&] { loop.quit(); });
+  loop.loop();
+  client.join();
+
+  require(response.find("HTTP/1.1 200 OK") != std::string::npos,
+          "self-referencing stream request completes");
+  require(marker.expired(), "stream callbacks release self-referencing captures after complete");
+}
+
 }  // namespace
 
 int main() {
   test_upload_writer_writes_part_then_renames();
+  test_upload_writer_assigns_unique_paths_for_concurrent_same_name_uploads();
+  test_upload_writer_can_overwrite_existing_file_when_requested();
   test_upload_writer_cancel_removes_part_file();
   test_upload_writer_reuses_blocks_for_many_small_chunks();
+  test_upload_writer_reuses_blocks_across_finished_sessions();
+  test_upload_writer_pool_cache_size_can_be_disabled();
   test_upload_writer_watermarks_fire_once_per_transition();
   test_upload_writer_rejects_limits_and_counts_failures();
   test_stream_pause_resume_and_cancel();
+  test_stream_callbacks_release_self_references_after_complete();
   return 0;
 }

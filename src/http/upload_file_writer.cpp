@@ -7,6 +7,7 @@
 #include <deque>
 #include <fstream>
 #include <mutex>
+#include <set>
 #include <utility>
 #include <vector>
 
@@ -29,11 +30,21 @@ struct UploadFileWriterPoolState {
   std::atomic_uint64_t completed_uploads{0};
   std::atomic_uint64_t failed_uploads{0};
   std::atomic_uint64_t canceled_uploads{0};
+
+  std::mutex path_mutex;
+  std::set<std::filesystem::path> reserved_final_paths;
+  std::uint64_t next_part_id{0};
+
+  std::mutex block_mutex;
+  std::vector<UploadBlock> cached_blocks;
+  std::size_t cached_block_bytes{0};
 };
 
 struct UploadFileWriterSessionState {
   UploadFileWriterOptions options;
   std::shared_ptr<UploadFileWriterPoolState> pool;
+  std::filesystem::path final_path;
+  std::filesystem::path part_path;
   UploadFileWriterPool::CompletionCallback completion;
   UploadFileWriterPool::WatermarkCallback high_watermark;
   UploadFileWriterPool::WatermarkCallback low_watermark;
@@ -58,12 +69,60 @@ struct UploadFileWriterSessionState {
 }  // namespace detail
 namespace {
 
-std::filesystem::path final_path_for(const UploadFileWriterOptions& options) {
-  return options.upload_dir / options.file_name;
+struct ReservedUploadPaths {
+  std::filesystem::path final_path;
+  std::filesystem::path part_path;
+  std::string file_name;
+};
+
+std::string fallback_upload_file_name(std::string file_name) {
+  if (file_name.empty()) {
+    return "upload.bin";
+  }
+  return file_name;
 }
 
-std::filesystem::path part_path_for(const std::filesystem::path& final_path) {
-  return final_path.string() + ".part";
+std::string file_name_with_index(const std::string& file_name, std::uint64_t index) {
+  if (index == 0) {
+    return file_name;
+  }
+
+  const std::filesystem::path path(file_name);
+  const auto extension = path.extension().string();
+  auto stem = path.stem().string();
+  if (stem.empty()) {
+    stem = "upload";
+  }
+  return stem + "-" + std::to_string(index) + extension;
+}
+
+ReservedUploadPaths reserve_upload_paths(
+    const std::shared_ptr<detail::UploadFileWriterPoolState>& pool,
+    const UploadFileWriterOptions& options) {
+  const auto requested_file_name = fallback_upload_file_name(options.file_name);
+
+  std::lock_guard lock(pool->path_mutex);
+  for (std::uint64_t index = 0;; ++index) {
+    auto file_name = file_name_with_index(requested_file_name, index);
+    auto final_path = options.upload_dir / file_name;
+
+    std::error_code ec;
+    const bool exists = std::filesystem::exists(final_path, ec);
+    const bool reserved = pool->reserved_final_paths.find(final_path) != pool->reserved_final_paths.end();
+    if ((exists && !options.overwrite_existing) || reserved) {
+      continue;
+    }
+
+    pool->reserved_final_paths.insert(final_path);
+    auto part_name = "." + final_path.filename().string() + "." +
+                     std::to_string(++pool->next_part_id) + ".part";
+    return {std::move(final_path), options.upload_dir / std::move(part_name), std::move(file_name)};
+  }
+}
+
+void release_upload_path(const std::shared_ptr<detail::UploadFileWriterSessionState>& state) {
+  std::lock_guard lock(state->pool->path_mutex);
+  state->pool->reserved_final_paths.erase(state->final_path);
 }
 
 bool try_increment_active(const std::shared_ptr<detail::UploadFileWriterPoolState>& pool) {
@@ -106,6 +165,39 @@ void release_queued(const std::shared_ptr<detail::UploadFileWriterPoolState>& po
   pool->total_queued_bytes.fetch_sub(bytes, std::memory_order_acq_rel);
 }
 
+detail::UploadBlock acquire_cached_pool_block(
+    const std::shared_ptr<detail::UploadFileWriterPoolState>& pool,
+    std::size_t capacity) {
+  std::lock_guard lock(pool->block_mutex);
+  for (auto it = pool->cached_blocks.begin(); it != pool->cached_blocks.end(); ++it) {
+    if (it->capacity != capacity) {
+      continue;
+    }
+    auto block = std::move(*it);
+    pool->cached_blocks.erase(it);
+    pool->cached_block_bytes -= block.capacity;
+    block.size = 0;
+    return block;
+  }
+  return {};
+}
+
+void cache_pool_block(const std::shared_ptr<detail::UploadFileWriterPoolState>& pool,
+                      detail::UploadBlock block) {
+  if (!block.data || block.capacity == 0 ||
+      block.capacity > pool->options.max_cached_block_bytes) {
+    return;
+  }
+
+  block.size = 0;
+  std::lock_guard lock(pool->block_mutex);
+  if (pool->cached_block_bytes > pool->options.max_cached_block_bytes - block.capacity) {
+    return;
+  }
+  pool->cached_block_bytes += block.capacity;
+  pool->cached_blocks.push_back(std::move(block));
+}
+
 detail::UploadBlock acquire_block_locked(
     const std::shared_ptr<detail::UploadFileWriterSessionState>& state) {
   if (!state->free_blocks.empty()) {
@@ -115,8 +207,14 @@ detail::UploadBlock acquire_block_locked(
     return block;
   }
 
+  const auto capacity = std::max<std::size_t>(state->options.block_size, 1);
+  auto cached = acquire_cached_pool_block(state->pool, capacity);
+  if (cached.data) {
+    return cached;
+  }
+
   detail::UploadBlock block;
-  block.capacity = std::max<std::size_t>(state->options.block_size, 1);
+  block.capacity = capacity;
   block.data = std::make_unique<char[]>(block.capacity);
   ++state->blocks_allocated;
   return block;
@@ -161,8 +259,35 @@ void flush_pending_block_locked(
   state->has_pending_block = false;
 }
 
+void release_session_blocks_to_pool(
+    const std::shared_ptr<detail::UploadFileWriterSessionState>& state) {
+  std::vector<detail::UploadBlock> blocks;
+  {
+    std::lock_guard lock(state->mutex);
+    if (state->has_pending_block) {
+      blocks.push_back(std::move(state->pending_block));
+      state->pending_block = detail::UploadBlock();
+      state->has_pending_block = false;
+    }
+    while (!state->ready_blocks.empty()) {
+      blocks.push_back(std::move(state->ready_blocks.front()));
+      state->ready_blocks.pop_front();
+    }
+    for (auto& block : state->free_blocks) {
+      blocks.push_back(std::move(block));
+    }
+    state->free_blocks.clear();
+  }
+
+  for (auto& block : blocks) {
+    cache_pool_block(state->pool, std::move(block));
+  }
+}
+
 void finish_worker_state(const std::shared_ptr<detail::UploadFileWriterSessionState>& state,
                          UploadFileWriterResult result) {
+  release_session_blocks_to_pool(state);
+  release_upload_path(state);
   state->pool->active_uploads.fetch_sub(1, std::memory_order_acq_rel);
   if (result.canceled) {
     state->pool->canceled_uploads.fetch_add(1, std::memory_order_acq_rel);
@@ -176,7 +301,9 @@ void finish_worker_state(const std::shared_ptr<detail::UploadFileWriterSessionSt
   {
     std::lock_guard lock(state->mutex);
     state->worker_done = true;
-    completion = state->completion;
+    completion = std::move(state->completion);
+    state->high_watermark = {};
+    state->low_watermark = {};
   }
   state->cv.notify_all();
 
@@ -186,11 +313,8 @@ void finish_worker_state(const std::shared_ptr<detail::UploadFileWriterSessionSt
 }
 
 void run_upload_writer_session(std::shared_ptr<detail::UploadFileWriterSessionState> state) {
-  const auto final_path = final_path_for(state->options);
-  const auto part_path = part_path_for(final_path);
-
   UploadFileWriterResult result;
-  result.path = final_path;
+  result.path = state->final_path;
   result.file_name = state->options.file_name;
   result.content_type = state->options.content_type;
 
@@ -201,7 +325,7 @@ void run_upload_writer_session(std::shared_ptr<detail::UploadFileWriterSessionSt
 
   std::ofstream file;
   if (ok) {
-    file.open(part_path, std::ios::binary | std::ios::trunc);
+    file.open(state->part_path, std::ios::binary | std::ios::trunc);
     ok = file.is_open();
     if (!ok) {
       error = "failed to open upload part file";
@@ -291,16 +415,16 @@ void run_upload_writer_session(std::shared_ptr<detail::UploadFileWriterSessionSt
   result.bytes = written;
 
   if (canceled || failed) {
-    std::filesystem::remove(part_path, ec);
+    std::filesystem::remove(state->part_path, ec);
     result.ok = false;
     result.error_message = canceled ? "upload canceled" : error;
     finish_worker_state(state, std::move(result));
     return;
   }
 
-  std::filesystem::rename(part_path, final_path, ec);
+  std::filesystem::rename(state->part_path, state->final_path, ec);
   if (ec) {
-    std::filesystem::remove(part_path, ec);
+    std::filesystem::remove(state->part_path, ec);
     result.ok = false;
     result.error_message = ec.message();
   } else {
@@ -456,9 +580,14 @@ std::shared_ptr<UploadFileWriterSession> UploadFileWriterPool::create_session(
     return nullptr;
   }
 
+  auto reserved_paths = reserve_upload_paths(state_, options);
+  options.file_name = std::move(reserved_paths.file_name);
+
   auto session_state = std::make_shared<detail::UploadFileWriterSessionState>();
   session_state->options = std::move(options);
   session_state->pool = state_;
+  session_state->final_path = std::move(reserved_paths.final_path);
+  session_state->part_path = std::move(reserved_paths.part_path);
   session_state->completion = std::move(completion);
   session_state->high_watermark = std::move(high_watermark);
   session_state->low_watermark = std::move(low_watermark);

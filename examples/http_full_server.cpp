@@ -13,6 +13,10 @@
 
 namespace {
 
+constexpr uint16_t kDefaultPort = 8080;
+constexpr int kDefaultIoThreads = 0;
+constexpr int kDefaultWorkerThreads = 4;
+
 uint16_t parse_port(const char* value, uint16_t fallback) {
   if (value == nullptr) {
     return fallback;
@@ -37,9 +41,10 @@ int parse_positive(const char* value, int fallback) {
 int main(int argc, char** argv) {
   std::signal(SIGPIPE, SIG_IGN);
 
-  const uint16_t port = argc > 1 ? parse_port(argv[1], 8080) : 8080;
-  const int io_threads = argc > 2 ? parse_positive(argv[2], 0) : 0;
-  const int worker_threads = argc > 3 ? parse_positive(argv[3], 4) : 4;
+  const uint16_t port = argc > 1 ? parse_port(argv[1], kDefaultPort) : kDefaultPort;
+  const int io_threads = argc > 2 ? parse_positive(argv[2], kDefaultIoThreads) : kDefaultIoThreads;
+  const int worker_threads =
+      argc > 3 ? parse_positive(argv[3], kDefaultWorkerThreads) : kDefaultWorkerThreads;
 
   oklib::Logger::set_file_basename("oklib_http_full_server");
   OKLIB_LOG_INFO << "starting HTTP demo server on port " << port
@@ -59,7 +64,9 @@ int main(int argc, char** argv) {
 
   std::cout << "oklib HTTP demo server listening on "
             << server.listen_address().to_ip_port() << '\n'
-            << "usage: " << argv[0] << " [port=8080] [io_threads=0] [worker_threads=4]\n";
+            << "usage: " << argv[0] << " [port] [io_threads] [worker_threads]\n"
+            << "defaults: port=" << kDefaultPort << ", io_threads=" << kDefaultIoThreads
+            << ", worker_threads=" << kDefaultWorkerThreads << '\n';
   loop.loop();
   return 0;
 }

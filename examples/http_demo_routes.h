@@ -285,7 +285,11 @@ inline void install_http_demo_routes(oklib::http::HttpServer& server,
   router.get("/ping",
              [](const oklib::http::HttpRequest&,
                 oklib::http::HttpResponseWriter writer) {
-               send_text(std::move(writer), 200, "pong\n");
+               //send_text(std::move(writer), 200, "pong\n");
+               auto response = writer.make_response();
+               response.set_status_code(200);
+               response.set_body("pong\n");
+               writer.send(std::move(response));
              });
 
   router.get("/headers",
@@ -420,108 +424,201 @@ inline void install_http_demo_routes(oklib::http::HttpServer& server,
                           const auto request_content_type = request.header("Content-Type");
                           if (oklib::http::content_type_from_string(request_content_type) ==
                               oklib::http::ContentType::multipart_form_data) {
-                            auto body = std::make_shared<std::string>();
-                            body_stream.set_data_callback([body](std::string_view chunk) {
-                              body->append(chunk);
-                            });
-                            body_stream.set_complete_callback(
-                                [body,
-                                 upload_dir,
-                                 request_content_type,
-                                 fallback_name = request.query_param("name").value_or(std::string{}),
-                                 writer = std::move(writer)]() mutable {
-                                  const auto parsed = oklib::http::parse_multipart_form_data(
-                                      request_content_type, *body);
-                                  if (!parsed.ok()) {
-                                    send_text(std::move(writer), 400, "malformed multipart upload\n");
+                            const auto boundary = oklib::http::multipart_boundary(request_content_type);
+                            if (!boundary.has_value()) {
+                              send_text(std::move(writer), 400, "missing multipart boundary\n");
+                              return;
+                            }
+
+                            auto writer_holder =
+                                std::make_shared<oklib::http::HttpResponseWriter>(std::move(writer));
+                            auto response_sent = std::make_shared<std::atomic_bool>(false);
+                            auto fallback_name =
+                                request.query_param("name").value_or(std::string{});
+
+                            auto send_error_once =
+                                [writer_holder, response_sent](int status, std::string body) mutable {
+                                  bool expected = false;
+                                  if (!response_sent->compare_exchange_strong(expected, true)) {
                                     return;
                                   }
+                                  send_text(std::move(*writer_holder), status, std::move(body));
+                                };
 
-                                  const oklib::http::MultipartPart* file_part = nullptr;
-                                  if (const auto* named_file = parsed.find("file");
-                                      named_file != nullptr && named_file->is_file()) {
-                                    file_part = named_file;
-                                  } else {
-                                    for (const auto& part : parsed.parts) {
-                                      if (part.is_file()) {
-                                        file_part = &part;
-                                        break;
-                                      }
+                            auto make_completion =
+                                [writer_holder, response_sent](oklib::http::UploadFileWriterResult result) mutable {
+                                  bool expected = false;
+                                  if (!response_sent->compare_exchange_strong(expected, true)) {
+                                    return;
+                                  }
+                                  if (!result.ok) {
+                                    if (!result.canceled) {
+                                      send_text(std::move(*writer_holder),
+                                                500,
+                                                result.error_message.empty()
+                                                    ? "failed to save upload\n"
+                                                    : result.error_message + "\n");
                                     }
+                                    return;
                                   }
-                                  if (file_part == nullptr) {
-                                    send_text(std::move(writer), 400, "missing multipart file part\n");
+                                  send_upload_json(std::move(*writer_holder),
+                                                   result.file_name,
+                                                   result.path,
+                                                   result.bytes,
+                                                   result.content_type);
+                                };
+
+                            auto make_options =
+                                [upload_dir](std::string file_name, std::string content_type) {
+                                  oklib::http::UploadFileWriterOptions options;
+                                  options.upload_dir = *upload_dir;
+                                  options.file_name = sanitized_upload_file_name(std::move(file_name));
+                                  options.content_type = std::move(content_type);
+                                  return options;
+                                };
+
+                            auto session =
+                                std::make_shared<std::shared_ptr<oklib::http::UploadFileWriterSession>>();
+                            auto accepting_file = std::make_shared<bool>(false);
+                            auto parser = std::make_shared<oklib::http::StreamingMultipartParser>(
+                                *boundary,
+                                [session,
+                                 accepting_file,
+                                 body_stream,
+                                 fallback_name = std::move(fallback_name),
+                                 make_completion,
+                                 send_error_once,
+                                 make_options](const oklib::http::StreamingMultipartPart& part) mutable {
+                                  *accepting_file = false;
+                                  if (*session || !part.is_file()) {
                                     return;
                                   }
 
-                                  auto file_name = sanitized_upload_file_name(
-                                      file_part->filename.empty() ? fallback_name : file_part->filename);
-                                  auto path = *upload_dir / file_name;
-                                  if (!save_upload_body(*upload_dir, path, file_part->body)) {
-                                    send_text(std::move(writer), 500, "failed to save upload\n");
+                                  auto file_name = part.filename.empty() ? fallback_name : part.filename;
+                                  auto content_type = part.content_type.empty()
+                                                          ? std::string("application/octet-stream")
+                                                          : part.content_type;
+                                  *session = upload_writer_pool->create_session(
+                                      make_options(std::move(file_name), std::move(content_type)),
+                                      make_completion,
+                                      [body_stream] { body_stream.pause_reading(); },
+                                      [body_stream] { body_stream.resume_reading(); });
+                                  if (!*session) {
+                                    send_error_once(503, "upload writer is busy\n");
+                                    body_stream.pause_reading();
                                     return;
                                   }
-
-                                  send_upload_json(std::move(writer),
-                                                   file_name,
-                                                   path,
-                                                   file_part->body.size(),
-                                                   file_part->content_type);
+                                  *accepting_file = true;
+                                },
+                                [session, accepting_file, body_stream, send_error_once](std::string_view data) mutable {
+                                  if (!*accepting_file || !*session) {
+                                    return;
+                                  }
+                                  if (!(*session)->append(data)) {
+                                    (*session)->cancel();
+                                    body_stream.pause_reading();
+                                    send_error_once(413, "upload rejected\n");
+                                  }
                                 });
+
+                            body_stream.set_data_callback(
+                                [parser, session, send_error_once](std::string_view chunk) mutable {
+                                  if (!parser->append(chunk)) {
+                                    if (*session) {
+                                      (*session)->cancel();
+                                    }
+                                    send_error_once(400, "malformed multipart upload\n");
+                                  }
+                                });
+                            body_stream.set_complete_callback(
+                                [parser, session, send_error_once]() mutable {
+                                  if (!parser->finish()) {
+                                    if (*session) {
+                                      (*session)->cancel();
+                                    }
+                                    send_error_once(400, "malformed multipart upload\n");
+                                    return;
+                                  }
+                                  if (!*session) {
+                                    send_error_once(400, "missing multipart file part\n");
+                                    return;
+                                  }
+                                  (*session)->finish();
+                                });
+                            body_stream.set_cancel_callback([session] {
+                              if (*session) {
+                                (*session)->cancel();
+                              }
+                            });
                             return;
                           }
 
-                          const auto file_name = std::make_shared<std::string>(
-                              sanitized_upload_file_name(
-                                  request.query_param("name").value_or(std::string{})));
-                          const auto path = std::make_shared<std::filesystem::path>(
-                              *upload_dir / *file_name);
-                          const auto bytes = std::make_shared<std::size_t>(0);
-                          const auto ok = std::make_shared<bool>(true);
-                          const auto file = std::make_shared<std::ofstream>();
+                          auto writer_holder =
+                              std::make_shared<oklib::http::HttpResponseWriter>(std::move(writer));
+                          auto response_sent = std::make_shared<std::atomic_bool>(false);
 
-                          std::error_code ec;
-                          std::filesystem::create_directories(*upload_dir, ec);
-                          if (ec) {
-                            *ok = false;
-                          } else {
-                            file->open(*path, std::ios::binary | std::ios::trunc);
-                            *ok = file->is_open();
-                          }
-
-                          body_stream.set_data_callback([file, bytes, ok](std::string_view chunk) {
-                            if (!*ok) {
-                              return;
-                            }
-                            file->write(chunk.data(), static_cast<std::streamsize>(chunk.size()));
-                            *bytes += chunk.size();
-                            if (!*file) {
-                              *ok = false;
-                            }
-                          });
-                          body_stream.set_complete_callback(
-                              [file_name,
-                               path,
-                               bytes,
-                               ok,
-                               file,
-                               request_content_type,
-                               writer = std::move(writer)]() mutable {
-                                if (file->is_open()) {
-                                  file->close();
-                                }
-
-                                if (!*ok) {
-                                  send_text(std::move(writer), 500, "failed to save upload\n");
+                          auto send_error_once =
+                              [writer_holder, response_sent](int status, std::string body) mutable {
+                                bool expected = false;
+                                if (!response_sent->compare_exchange_strong(expected, true)) {
                                   return;
                                 }
+                                send_text(std::move(*writer_holder), status, std::move(body));
+                              };
 
-                                send_upload_json(std::move(writer),
-                                                 *file_name,
-                                                 *path,
-                                                 *bytes,
-                                                 request_content_type);
+                          auto make_completion =
+                              [writer_holder, response_sent](oklib::http::UploadFileWriterResult result) mutable {
+                                bool expected = false;
+                                if (!response_sent->compare_exchange_strong(expected, true)) {
+                                  return;
+                                }
+                                if (!result.ok) {
+                                  if (!result.canceled) {
+                                    send_text(std::move(*writer_holder),
+                                              500,
+                                              result.error_message.empty()
+                                                  ? "failed to save upload\n"
+                                                  : result.error_message + "\n");
+                                  }
+                                  return;
+                                }
+                                send_upload_json(std::move(*writer_holder),
+                                                 result.file_name,
+                                                 result.path,
+                                                 result.bytes,
+                                                 result.content_type);
+                              };
+
+                          oklib::http::UploadFileWriterOptions options;
+                          options.upload_dir = *upload_dir;
+                          options.file_name = sanitized_upload_file_name(
+                              request.query_param("name").value_or(std::string{}));
+                          options.content_type = request_content_type;
+                          auto session = upload_writer_pool->create_session(
+                              std::move(options),
+                              make_completion,
+                              [body_stream] { body_stream.pause_reading(); },
+                              [body_stream] { body_stream.resume_reading(); });
+                          if (!session) {
+                            send_error_once(503, "upload writer is busy\n");
+                            body_stream.pause_reading();
+                            return;
+                          }
+
+                          body_stream.set_data_callback(
+                              [session, body_stream, send_error_once](std::string_view chunk) mutable {
+                                if (!session->append(chunk)) {
+                                  session->cancel();
+                                  body_stream.pause_reading();
+                                  send_error_once(413, "upload rejected\n");
+                                }
                               });
+                          body_stream.set_complete_callback([session] {
+                            session->finish();
+                          });
+                          body_stream.set_cancel_callback([session] {
+                            session->cancel();
+                          });
                         });
 
   router.post_streaming("/upload-file-worker",
@@ -571,6 +668,7 @@ inline void install_http_demo_routes(oklib::http::HttpServer& server,
                                 options.upload_dir = upload_dir;
                                 options.file_name = sanitized_upload_file_name(std::move(file_name));
                                 options.content_type = std::move(content_type);
+                                options.overwrite_existing = true;
                                 return options;
                               };
 
