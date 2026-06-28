@@ -191,9 +191,9 @@ void HttpResponseWriter::flush_ready_responses(const StatePtr& state) {
     }
   }
 
-  for (const auto& response : ready) {
-    for (const auto& chunk : response.chunks) {
-      connection->send(chunk);
+  for (auto& response : ready) {
+    for (auto& chunk : response.chunks) {
+      connection->send(std::move(chunk));
     }
   }
   if (close_after_ready) {

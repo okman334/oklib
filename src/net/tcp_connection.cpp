@@ -64,12 +64,25 @@ void TcpConnection::send(std::string_view message) {
   if (!connected()) {
     return;
   }
-  std::string owned(message);
+  send(std::string(message));
+}
+
+void TcpConnection::send(const char* message) {
+  if (message == nullptr) {
+    return;
+  }
+  send(std::string_view(message));
+}
+
+void TcpConnection::send(std::string&& message) {
+  if (!connected()) {
+    return;
+  }
   if (loop_->is_in_loop_thread()) {
-    send_in_loop(std::move(owned));
+    send_in_loop(std::move(message));
   } else {
     auto self = shared_from_this();
-    loop_->queue_in_loop([self, message = std::move(owned)]() mutable { self->send_in_loop(std::move(message)); });
+    loop_->queue_in_loop([self, message = std::move(message)]() mutable { self->send_in_loop(std::move(message)); });
   }
 }
 

@@ -11,6 +11,7 @@
 #include <iostream>
 #include <string>
 #include <thread>
+#include <utility>
 
 namespace {
 
@@ -25,6 +26,12 @@ void require(bool condition, const char* message) {
 
 int main() {
   using namespace std::chrono_literals;
+
+  {
+    auto send_owned_string =
+        static_cast<void (oklib::net::TcpConnection::*)(std::string&&)>(&oklib::net::TcpConnection::send);
+    (void)send_owned_string;
+  }
 
   {
     oklib::net::EventLoop loop;

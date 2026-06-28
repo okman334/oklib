@@ -36,6 +36,8 @@ class TcpConnection : private oklib::Noncopyable, public std::enable_shared_from
   [[nodiscard]] bool tls_established() const noexcept;
 
   void send(std::string_view message);
+  void send(const char* message);
+  void send(std::string&& message);
   void send(const void* data, std::size_t len);
   void send(Buffer* buffer);
   void send_raw(std::string_view message);
