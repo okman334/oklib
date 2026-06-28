@@ -76,6 +76,10 @@ add_executable(oklib_http_multipart_parser_test http/multipart_parser_test.cpp)
 target_link_libraries(oklib_http_multipart_parser_test PRIVATE oklib::http)
 add_test(NAME oklib.http.multipart_parser COMMAND oklib_http_multipart_parser_test)
 
+add_executable(oklib_http_streaming_multipart_parser_test http/streaming_multipart_parser_test.cpp)
+target_link_libraries(oklib_http_streaming_multipart_parser_test PRIVATE oklib::http)
+add_test(NAME oklib.http.streaming_multipart_parser COMMAND oklib_http_streaming_multipart_parser_test)
+
 add_executable(oklib_http_upload_writer_test http/http_upload_writer_test.cpp)
 target_link_libraries(oklib_http_upload_writer_test PRIVATE oklib::http)
 add_test(NAME oklib.http.upload_writer COMMAND oklib_http_upload_writer_test)

@@ -301,6 +301,62 @@ void test_upload_file_worker_route_saves_raw_body() {
   std::filesystem::remove(upload_path);
 }
 
+void test_upload_file_worker_route_saves_multipart_body() {
+  const std::string file_name = "oklib-demo-routes-worker-multipart-test.mp4";
+  const std::filesystem::path upload_path = std::filesystem::current_path() / "uploads" / file_name;
+  std::filesystem::remove(upload_path);
+
+  oklib::net::EventLoop loop;
+  oklib::ThreadPool workers("http-demo-routes-worker-multipart-test-workers");
+  workers.start(2);
+
+  oklib::http::HttpServer server(&loop,
+                                 oklib::net::InetAddress::loopback(0),
+                                 "http-demo-routes-worker-multipart-test");
+  oklib::examples::install_http_demo_routes(server, workers);
+  server.start();
+
+  const std::string boundary = "----oklib-worker-multipart-boundary";
+  const std::string mp4_body = std::string("\0\0\0\x18", 4) + "ftypmp42oklib-worker";
+  const std::string multipart_body =
+      "--" + boundary + "\r\n"
+      "Content-Disposition: form-data; name=\"file\"; filename=\"" + file_name + "\"\r\n"
+      "Content-Type: video/mp4\r\n"
+      "\r\n" +
+      mp4_body +
+      "\r\n"
+      "--" + boundary + "--\r\n";
+  const std::string request =
+      "POST /upload-file-worker HTTP/1.1\r\n"
+      "Host: localhost\r\n"
+      "Content-Type: multipart/form-data; boundary=" + boundary + "\r\n"
+      "Content-Length: " + std::to_string(multipart_body.size()) + "\r\n"
+      "Connection: close\r\n\r\n" +
+      multipart_body;
+
+  std::string response;
+  std::thread client([&] {
+    response = request_once(request, server.listen_address(), &loop);
+  });
+  loop.run_after(std::chrono::seconds(2), [&] { loop.quit(); });
+  loop.loop();
+  client.join();
+  workers.stop();
+
+  require(response.find("HTTP/1.1 201 Created") != std::string::npos,
+          "worker multipart upload route returns 201");
+  require(response.find("\"file\":\"" + file_name + "\"") != std::string::npos,
+          "worker multipart response includes file name");
+  require(response.find("\"content_type\":\"video/mp4\"") != std::string::npos,
+          "worker multipart response includes content type");
+  require(response.find("\"bytes\":" + std::to_string(mp4_body.size())) != std::string::npos,
+          "worker multipart response includes byte count");
+  require(read_file(upload_path) == mp4_body,
+          "worker multipart uploaded body is saved byte-for-byte");
+
+  std::filesystem::remove(upload_path);
+}
+
 void test_upload_file_route_handles_cors_preflight() {
   oklib::net::EventLoop loop;
   oklib::ThreadPool workers("http-demo-routes-cors-test-workers");
@@ -348,6 +404,7 @@ int main() {
   test_upload_file_route_saves_multipart_mp4_file();
   test_upload_file_route_decodes_percent_encoded_utf8_filename();
   test_upload_file_worker_route_saves_raw_body();
+  test_upload_file_worker_route_saves_multipart_body();
   test_upload_file_route_handles_cors_preflight();
   return 0;
 }
