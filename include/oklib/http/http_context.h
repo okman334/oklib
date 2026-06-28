@@ -31,6 +31,7 @@ class HttpContext {
   void start_streaming_chunked_body(HttpRequestBodyStream body_stream);
   [[nodiscard]] bool streaming_body_active() const noexcept { return streaming_body_active_; }
   HttpParseStatus process_streaming_body(oklib::net::Buffer* buffer);
+  void cancel_streaming_body();
   void set_peer_address(std::string ip, uint16_t port);
   void reset();
 

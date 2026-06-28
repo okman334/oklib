@@ -104,6 +104,9 @@ void HttpContext::start_streaming_chunked_body(HttpRequestBodyStream body_stream
 }
 
 HttpParseStatus HttpContext::process_streaming_body(oklib::net::Buffer* buffer) {
+  if (body_stream_.reading_paused()) {
+    return HttpParseStatus::incomplete;
+  }
   if (streaming_body_mode_ == StreamingBodyMode::chunked) {
     return process_chunked_streaming_body(buffer);
   }
@@ -112,6 +115,9 @@ HttpParseStatus HttpContext::process_streaming_body(oklib::net::Buffer* buffer) 
 
 HttpParseStatus HttpContext::process_fixed_streaming_body(oklib::net::Buffer* buffer) {
   while (streaming_body_remaining_ > 0 && buffer->readable_bytes() > 0) {
+    if (body_stream_.reading_paused()) {
+      return HttpParseStatus::incomplete;
+    }
     const auto chunk_size =
         std::min<std::uint64_t>(streaming_body_remaining_, buffer->readable_bytes());
     body_stream_.on_data(std::string_view(buffer->peek(), static_cast<std::size_t>(chunk_size)));
@@ -159,6 +165,9 @@ HttpParseStatus HttpContext::process_chunked_streaming_body(oklib::net::Buffer* 
         break;
       }
       case StreamingChunkState::data: {
+        if (body_stream_.reading_paused()) {
+          return HttpParseStatus::incomplete;
+        }
         if (buffer->readable_bytes() == 0) {
           return HttpParseStatus::incomplete;
         }
@@ -212,6 +221,19 @@ HttpParseStatus HttpContext::process_chunked_streaming_body(oklib::net::Buffer* 
       }
     }
   }
+}
+
+void HttpContext::cancel_streaming_body() {
+  if (!streaming_body_active_) {
+    return;
+  }
+  streaming_body_active_ = false;
+  streaming_body_mode_ = StreamingBodyMode::none;
+  streaming_chunk_state_ = StreamingChunkState::size;
+  streaming_body_remaining_ = 0;
+  streaming_decoded_body_bytes_ = 0;
+  streaming_trailer_bytes_ = 0;
+  body_stream_.on_cancel();
 }
 
 void HttpContext::reset() {

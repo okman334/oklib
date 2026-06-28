@@ -110,6 +110,12 @@ void HttpServer::on_connection(const oklib::net::TcpConnectionPtr& connection) {
     ServerConnectionContext context;
     context.http.set_peer_address(connection->peer_address().to_ip(), connection->peer_address().port());
     connection->set_context(std::move(context));
+    return;
+  }
+
+  auto* context = std::any_cast<ServerConnectionContext>(&connection->mutable_context());
+  if (context != nullptr) {
+    context->http.cancel_streaming_body();
   }
 }
 
@@ -133,6 +139,7 @@ void HttpServer::on_plain_message(const oklib::net::TcpConnectionPtr& connection
     if (context->streaming_body_active()) {
       const auto status = context->process_streaming_body(buffer);
       if (status == HttpParseStatus::error) {
+        context->cancel_streaming_body();
         send_bad_request_and_close(connection);
         return;
       }
@@ -174,6 +181,7 @@ void HttpServer::on_plain_message(const oklib::net::TcpConnectionPtr& connection
     if (context->streaming_body_active()) {
       const auto body_status = context->process_streaming_body(buffer);
       if (body_status == HttpParseStatus::error) {
+        context->cancel_streaming_body();
         send_bad_request_and_close(connection);
         return;
       }
@@ -238,6 +246,17 @@ bool HttpServer::on_streaming_request(const oklib::net::TcpConnectionPtr& connec
   const auto body_length = request.content_length();
   auto writer = context->make_response_writer(connection, close, include_body);
   HttpRequestBodyStream body_stream;
+  std::weak_ptr<oklib::net::TcpConnection> weak_connection = connection;
+  body_stream.set_pause_callback([weak_connection] {
+    if (auto conn = weak_connection.lock()) {
+      conn->pause_reading();
+    }
+  });
+  body_stream.set_resume_callback([weak_connection] {
+    if (auto conn = weak_connection.lock()) {
+      conn->resume_reading();
+    }
+  });
   streaming_http_callback_(std::move(request), body_stream, std::move(writer));
   if (chunked_body) {
     context->start_streaming_chunked_body(std::move(body_stream));

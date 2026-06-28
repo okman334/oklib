@@ -46,6 +46,11 @@ class TcpConnection : private oklib::Noncopyable, public std::enable_shared_from
   void set_tcp_no_delay(bool on);
   void start_read();
   void stop_read();
+  void pause_reading();
+  void resume_reading();
+  [[nodiscard]] bool reading_paused() const noexcept {
+    return !reading_.load(std::memory_order_acquire);
+  }
 
   void set_context(std::any context) { context_ = std::move(context); }
   [[nodiscard]] const std::any& context() const noexcept { return context_; }
@@ -86,12 +91,13 @@ class TcpConnection : private oklib::Noncopyable, public std::enable_shared_from
   void force_close_in_loop();
   void start_read_in_loop();
   void stop_read_in_loop();
+  void dispatch_pending_read_in_loop(oklib::Timestamp receive_time);
   void set_state(State state) noexcept { state_.store(state, std::memory_order_release); }
 
   EventLoop* loop_;
   std::string name_;
   std::atomic<State> state_{State::connecting};
-  bool reading_{true};
+  std::atomic_bool reading_{true};
   std::unique_ptr<Socket> socket_;
   std::unique_ptr<Channel> channel_;
   InetAddress local_address_;

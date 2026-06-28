@@ -20,6 +20,10 @@ add_executable(oklib_tcp_test net/tcp_test.cpp)
 target_link_libraries(oklib_tcp_test PRIVATE oklib::net)
 add_test(NAME oklib.tcp COMMAND oklib_tcp_test)
 
+add_executable(oklib_tcp_read_control_test net/tcp_read_control_test.cpp)
+target_link_libraries(oklib_tcp_read_control_test PRIVATE oklib::net)
+add_test(NAME oklib.tcp.read_control COMMAND oklib_tcp_read_control_test)
+
 add_executable(oklib_timer_thread_test net/timer_thread_test.cpp)
 target_link_libraries(oklib_timer_thread_test PRIVATE oklib::net)
 add_test(NAME oklib.timer_thread COMMAND oklib_timer_thread_test)
@@ -71,6 +75,10 @@ add_test(NAME oklib.http.parser COMMAND oklib_http_parser_test)
 add_executable(oklib_http_multipart_parser_test http/multipart_parser_test.cpp)
 target_link_libraries(oklib_http_multipart_parser_test PRIVATE oklib::http)
 add_test(NAME oklib.http.multipart_parser COMMAND oklib_http_multipart_parser_test)
+
+add_executable(oklib_http_upload_writer_test http/http_upload_writer_test.cpp)
+target_link_libraries(oklib_http_upload_writer_test PRIVATE oklib::http)
+add_test(NAME oklib.http.upload_writer COMMAND oklib_http_upload_writer_test)
 
 add_executable(oklib_http_semantics_test http/http_semantics_test.cpp)
 target_link_libraries(oklib_http_semantics_test PRIVATE oklib::http)

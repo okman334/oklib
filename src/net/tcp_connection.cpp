@@ -172,6 +172,14 @@ void TcpConnection::stop_read() {
   loop_->run_in_loop([self] { self->stop_read_in_loop(); });
 }
 
+void TcpConnection::pause_reading() {
+  stop_read();
+}
+
+void TcpConnection::resume_reading() {
+  start_read();
+}
+
 void TcpConnection::connect_established() {
   loop_->assert_in_loop_thread();
   set_state(State::connected);
@@ -443,17 +451,34 @@ void TcpConnection::force_close_in_loop() {
 
 void TcpConnection::start_read_in_loop() {
   loop_->assert_in_loop_thread();
-  if (!reading_) {
+  if (!reading_.load(std::memory_order_acquire)) {
     channel_->enable_reading();
-    reading_ = true;
+    reading_.store(true, std::memory_order_release);
+    dispatch_pending_read_in_loop(oklib::Timestamp::now());
   }
 }
 
 void TcpConnection::stop_read_in_loop() {
   loop_->assert_in_loop_thread();
-  if (reading_) {
+  if (reading_.load(std::memory_order_acquire)) {
     channel_->disable_reading();
-    reading_ = false;
+    reading_.store(false, std::memory_order_release);
+  }
+}
+
+void TcpConnection::dispatch_pending_read_in_loop(oklib::Timestamp receive_time) {
+  loop_->assert_in_loop_thread();
+  if (!connected()) {
+    return;
+  }
+#if OKLIB_ENABLE_TLS
+  if (tls_ && tls_->plain_input_buffer.readable_bytes() > 0) {
+    message_callback_(shared_from_this(), &tls_->plain_input_buffer, receive_time);
+    return;
+  }
+#endif
+  if (input_buffer_.readable_bytes() > 0) {
+    message_callback_(shared_from_this(), &input_buffer_, receive_time);
   }
 }
 
