@@ -63,6 +63,13 @@ int main() {
   require(ipv4.target.port == 8080, "IPv4 port is parsed");
   require(ipv4.consumed == 10, "IPv4 request consumes exact request length");
 
+  auto nonzero_rsv = parse_connect_request(
+      bytes({0x05, 0x01, 0xff, 0x01, 127, 0, 0, 1, 0, 80}));
+  require(nonzero_rsv.status == ParseStatus::error,
+          "CONNECT request with nonzero reserved byte is rejected");
+  require(nonzero_rsv.reply == ReplyCode::general_failure,
+          "nonzero reserved byte maps to general failure");
+
   auto domain = parse_connect_request(
       bytes({0x05, 0x01, 0x00, 0x03, 11, 'e', 'x', 'a', 'm', 'p', 'l', 'e',
              '.', 'c', 'o', 'm', 0x00, 0x50}));

@@ -144,6 +144,7 @@ inline RequestParseResult parse_connect_request(std::string_view data) {
   }
   const auto version = static_cast<std::uint8_t>(data[0]);
   const auto command = static_cast<std::uint8_t>(data[1]);
+  const auto reserved = static_cast<std::uint8_t>(data[2]);
   const auto address_type = static_cast<std::uint8_t>(data[3]);
   if (version != kVersion) {
     return RequestParseResult{ParseStatus::error, ReplyCode::general_failure,
@@ -152,6 +153,10 @@ inline RequestParseResult parse_connect_request(std::string_view data) {
   if (command != 0x01) {
     return RequestParseResult{ParseStatus::error,
                               ReplyCode::command_not_supported, {}, 2};
+  }
+  if (reserved != 0x00) {
+    return RequestParseResult{ParseStatus::error, ReplyCode::general_failure,
+                              {}, 3};
   }
   if (address_type == 0x01) {
     if (data.size() < 10) {
