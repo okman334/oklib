@@ -36,6 +36,8 @@ using SocksAuthMethod = oklib::examples::socks5::AuthMethod;
 using SocksParseStatus = oklib::examples::socks5::ParseStatus;
 using SocksReplyCode = oklib::examples::socks5::ReplyCode;
 
+constexpr auto kConnectTimeout = std::chrono::seconds(2);
+
 struct Options {
   std::uint16_t port{1080};
   int io_threads{0};
@@ -106,7 +108,8 @@ std::optional<Options> parse_options(int argc, char** argv) {
         return std::nullopt;
       }
     } else if (arg == "--tls") {
-      if (i + 2 >= argc) {
+      if (i + 2 >= argc || starts_with(argv[i + 1], "--") ||
+          starts_with(argv[i + 2], "--")) {
         return std::nullopt;
       }
       options.tls = true;
@@ -219,12 +222,18 @@ class Socks5ProxySession
     }
     phase_ = Phase::closed;
     cancel_connect_timer();
-    if (upstream_ && upstream_->connected()) {
-      upstream_->force_close();
+    if (upstream_) {
+      if (upstream_->connected()) {
+        upstream_->force_close();
+      }
+      schedule_upstream_cleanup();
+      return;
     }
     if (client_) {
       client_->stop();
+      client_.reset();
     }
+    self_hold_.reset();
   }
 
  private:
@@ -320,6 +329,7 @@ class Socks5ProxySession
                         std::string_view host,
                         std::uint16_t port) {
     auto weak = weak_from_this();
+    self_hold_ = shared_from_this();
     client_ = std::make_unique<oklib::net::TcpClient>(
         downstream_->loop(), target, "socks5-upstream");
     client_->set_connection_callback([weak](const auto& connection) {
@@ -336,8 +346,7 @@ class Socks5ProxySession
           }
         });
 
-    connect_timer_ = downstream_->loop()->run_after(std::chrono::seconds(10),
-                                                    [weak] {
+    connect_timer_ = downstream_->loop()->run_after(kConnectTimeout, [weak] {
       if (auto session = weak.lock()) {
         session->on_connect_timeout();
       }
@@ -353,6 +362,8 @@ class Socks5ProxySession
     if (phase_ == Phase::closed) {
       if (connection->connected()) {
         connection->force_close();
+      } else {
+        schedule_upstream_cleanup();
       }
       return;
     }
@@ -378,11 +389,13 @@ class Socks5ProxySession
 
     if (phase_ == Phase::connecting) {
       send_reply_and_shutdown(SocksReplyCode::general_failure);
+      schedule_upstream_cleanup();
       return;
     }
 
     close_downstream_now();
     phase_ = Phase::closed;
+    schedule_upstream_cleanup();
   }
 
   void on_upstream_message(oklib::net::Buffer* buffer) {
@@ -402,8 +415,10 @@ class Socks5ProxySession
                    << downstream_->peer_address().to_ip_port();
     if (client_) {
       client_->stop();
+      client_.reset();
     }
     send_reply_and_shutdown(SocksReplyCode::general_failure);
+    self_hold_.reset();
   }
 
   void relay_downstream(oklib::net::Buffer* buffer) {
@@ -455,13 +470,28 @@ class Socks5ProxySession
     }
   }
 
+  void schedule_upstream_cleanup() {
+    if (upstream_cleanup_scheduled_) {
+      return;
+    }
+    upstream_cleanup_scheduled_ = true;
+    auto self = shared_from_this();
+    downstream_->loop()->queue_in_loop([self] {
+      self->upstream_.reset();
+      self->client_.reset();
+      self->self_hold_.reset();
+    });
+  }
+
   oklib::net::TcpConnectionPtr downstream_;
   oklib::net::TcpConnectionPtr upstream_;
   std::unique_ptr<oklib::net::TcpClient> client_;
+  std::shared_ptr<Socks5ProxySession> self_hold_;
   SocksAuthConfig auth_;
   Phase phase_{Phase::greeting};
   std::string preserved_downstream_;
   oklib::net::TimerId connect_timer_;
+  bool upstream_cleanup_scheduled_{false};
 };
 
 std::shared_ptr<Socks5ProxySession>* session_from(
