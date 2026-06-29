@@ -1,3 +1,33 @@
+/*
+ * SOCKS5 proxy server example
+ *
+ * Build:
+ *   cmake --build build --target oklib_socks5_proxy_server
+ *
+ * Start without authentication:
+ *   ./build/examples/oklib_socks5_proxy_server
+ *   ./build/examples/oklib_socks5_proxy_server 1080
+ *
+ * Start with username/password authentication:
+ *   ./build/examples/oklib_socks5_proxy_server alice secret
+ *   ./build/examples/oklib_socks5_proxy_server 1080 alice secret
+ *
+ * Start with I/O threads:
+ *   ./build/examples/oklib_socks5_proxy_server 1080 --threads 4
+ *
+ * Start with a TLS-wrapped SOCKS5 listener. This requires a build configured
+ * with OKLIB_ENABLE_TLS=ON:
+ *   ./build-tls/examples/oklib_socks5_proxy_server 1082 --tls examples/certs/oklib_demo_server.crt examples/certs/oklib_demo_server.key
+ *   ./build-tls/examples/oklib_socks5_proxy_server 1082 alice secret --tls examples/certs/oklib_demo_server.crt examples/certs/oklib_demo_server.key
+ *
+ * Test with curl:
+ *   curl -v --proxy socks5h://127.0.0.1:1080 http://example.com/
+ *   curl -v --proxy socks5h://alice:secret@127.0.0.1:1080 http://example.com/
+ *
+ * Note: --tls wraps the proxy listener itself in TLS. A regular
+ * socks5h:// curl proxy URL does not perform TLS to the proxy.
+ */
+
 #include <algorithm>
 #include <any>
 #include <charconv>
