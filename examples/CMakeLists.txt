@@ -39,5 +39,8 @@ target_link_libraries(oklib_tcp_echo_server PRIVATE oklib::net)
 add_executable(oklib_tcp_echo_client tcp_echo_client.cpp)
 target_link_libraries(oklib_tcp_echo_client PRIVATE oklib::net)
 
+add_executable(oklib_socks5_proxy_server socks5_proxy_server.cpp)
+target_link_libraries(oklib_socks5_proxy_server PRIVATE oklib::net)
+
 add_executable(oklib_timer_thread_demo timer_thread_demo.cpp)
 target_link_libraries(oklib_timer_thread_demo PRIVATE oklib::net)
