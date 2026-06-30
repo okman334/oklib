@@ -15,6 +15,10 @@
  * Start with I/O threads:
  *   ./build/examples/oklib_socks5_proxy_server 1080 --threads 4
  *
+ * Start with IPv6 or dual-stack listening:
+ *   ./build/examples/oklib_socks5_proxy_server 1080 --ipv6
+ *   ./build/examples/oklib_socks5_proxy_server 1080 --dual-stack
+ *
  * Start with a TLS-wrapped SOCKS5 listener. This requires a build configured
  * with OKLIB_ENABLE_TLS=ON:
  *   ./build-tls/examples/oklib_socks5_proxy_server 1082 --tls examples/certs/oklib_demo_server.crt examples/certs/oklib_demo_server.key
@@ -22,6 +26,7 @@
  *
  * Test with curl:
  *   curl -v --proxy socks5h://127.0.0.1:1080 http://example.com/
+ *   curl -v --proxy socks5h://[::1]:1080 http://example.com/
  *   curl -v --proxy socks5h://alice:secret@127.0.0.1:1080 http://example.com/
  *
  * Note: --tls wraps the proxy listener itself in TLS. A regular
@@ -35,16 +40,12 @@
 #include <csignal>
 #include <cstdint>
 #include <cstdlib>
-#include <cctype>
 #include <iostream>
 #include <limits>
 #include <memory>
-#include <netdb.h>
 #include <optional>
-#include <stdexcept>
 #include <string>
 #include <string_view>
-#include <sys/socket.h>
 #include <utility>
 #include <vector>
 
@@ -52,6 +53,7 @@
 #include "oklib/net/buffer.h"
 #include "oklib/net/event_loop.h"
 #include "oklib/net/inet_address.h"
+#include "oklib/net/resolver.h"
 #include "oklib/net/tcp_client.h"
 #include "oklib/net/tcp_connection.h"
 #include "oklib/net/tcp_server.h"
@@ -68,22 +70,21 @@ using SocksReplyCode = oklib::examples::socks5::ReplyCode;
 
 constexpr auto kConnectTimeout = std::chrono::seconds(2);
 
+enum class ListenMode {
+  ipv4,
+  ipv6,
+  dual_stack,
+};
+
 struct Options {
   std::uint16_t port{1080};
   int io_threads{0};
+  ListenMode listen_mode{ListenMode::ipv4};
   SocksAuthConfig auth;
   bool tls{false};
   std::string cert_file;
   std::string key_file;
 };
-
-std::string lower(std::string_view value) {
-  std::string result(value);
-  for (char& ch : result) {
-    ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
-  }
-  return result;
-}
 
 bool starts_with(std::string_view value, std::string_view prefix) {
   return value.size() >= prefix.size() && value.substr(0, prefix.size()) == prefix;
@@ -124,7 +125,7 @@ bool parse_threads(std::string_view value, int* threads) {
 void print_usage(const char* program) {
   std::cerr << "usage: " << program
             << " <port=1080> [username password] [--threads N]"
-               " [--tls cert.pem key.pem]\n";
+               " [--ipv6|--dual-stack] [--tls cert.pem key.pem]\n";
 }
 
 std::optional<Options> parse_options(int argc, char** argv) {
@@ -137,6 +138,16 @@ std::optional<Options> parse_options(int argc, char** argv) {
       if (i + 1 >= argc || !parse_threads(argv[++i], &options.io_threads)) {
         return std::nullopt;
       }
+    } else if (arg == "--ipv6") {
+      if (options.listen_mode == ListenMode::dual_stack) {
+        return std::nullopt;
+      }
+      options.listen_mode = ListenMode::ipv6;
+    } else if (arg == "--dual-stack") {
+      if (options.listen_mode == ListenMode::ipv6) {
+        return std::nullopt;
+      }
+      options.listen_mode = ListenMode::dual_stack;
     } else if (arg == "--tls") {
       if (i + 2 >= argc || starts_with(argv[i + 1], "--") ||
           starts_with(argv[i + 2], "--")) {
@@ -171,40 +182,6 @@ std::optional<Options> parse_options(int argc, char** argv) {
   }
 
   return options;
-}
-
-std::optional<oklib::net::InetAddress> resolve_ipv4(std::string_view host,
-                                                    std::uint16_t port) {
-  std::string host_string(host);
-  if (lower(host_string) == "localhost") {
-    host_string = "127.0.0.1";
-  }
-
-  try {
-    return oklib::net::InetAddress(host_string, port);
-  } catch (const std::invalid_argument&) {
-  }
-
-  addrinfo hints{};
-  hints.ai_family = AF_INET;
-  hints.ai_socktype = SOCK_STREAM;
-  hints.ai_protocol = IPPROTO_TCP;
-  addrinfo* result = nullptr;
-  const std::string service = std::to_string(port);
-  if (::getaddrinfo(host_string.c_str(), service.c_str(), &hints, &result) !=
-      0) {
-    return std::nullopt;
-  }
-
-  std::unique_ptr<addrinfo, decltype(&::freeaddrinfo)> guard(result,
-                                                             ::freeaddrinfo);
-  for (addrinfo* ai = result; ai != nullptr; ai = ai->ai_next) {
-    if (ai->ai_family == AF_INET && ai->ai_addrlen >= sizeof(sockaddr_in)) {
-      return oklib::net::InetAddress(
-          *reinterpret_cast<sockaddr_in*>(ai->ai_addr));
-    }
-  }
-  return std::nullopt;
 }
 
 std::string bytes_to_string(const std::vector<std::uint8_t>& bytes) {
@@ -343,8 +320,9 @@ class Socks5ProxySession
     }
 
     buffer->retrieve(result.consumed);
-    auto target = resolve_ipv4(result.target.host, result.target.port);
-    if (!target) {
+    auto targets =
+        oklib::net::resolve_tcp_addresses(result.target.host, result.target.port);
+    if (targets.empty()) {
       send_reply_and_shutdown(SocksReplyCode::general_failure);
       return;
     }
@@ -352,16 +330,17 @@ class Socks5ProxySession
     preserved_downstream_ = buffer->retrieve_all_as_string();
     downstream_->pause_reading();
     phase_ = Phase::connecting;
-    connect_upstream(*target, result.target.host, result.target.port);
+    connect_upstream(std::move(targets), result.target.host, result.target.port);
   }
 
-  void connect_upstream(const oklib::net::InetAddress& target,
+  void connect_upstream(std::vector<oklib::net::InetAddress> targets,
                         std::string_view host,
                         std::uint16_t port) {
     auto weak = weak_from_this();
     self_hold_ = shared_from_this();
+    const auto first_target = targets.front().to_ip_port();
     client_ = std::make_unique<oklib::net::TcpClient>(
-        downstream_->loop(), target, "socks5-upstream");
+        downstream_->loop(), std::move(targets), "socks5-upstream");
     client_->set_connection_callback([weak](const auto& connection) {
       if (auto session = weak.lock()) {
         session->on_upstream_connection(connection);
@@ -384,7 +363,7 @@ class Socks5ProxySession
 
     OKLIB_LOG_INFO << "SOCKS5 connecting "
                    << downstream_->peer_address().to_ip_port() << " to "
-                   << host << ':' << port << " via " << target.to_ip_port();
+                   << host << ':' << port << " via " << first_target;
     client_->connect();
   }
 
@@ -534,6 +513,18 @@ const char* auth_mode(const SocksAuthConfig& auth) {
   return auth.enabled() ? "username/password" : "none";
 }
 
+const char* listen_mode_name(ListenMode mode) {
+  switch (mode) {
+    case ListenMode::ipv4:
+      return "ipv4";
+    case ListenMode::ipv6:
+      return "ipv6";
+    case ListenMode::dual_stack:
+      return "dual-stack";
+  }
+  return "unknown";
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -554,8 +545,14 @@ int main(int argc, char** argv) {
   }
 
   oklib::net::EventLoop loop;
-  oklib::net::TcpServer server(&loop, oklib::net::InetAddress::any(options.port),
-                               "socks5-proxy");
+  const bool use_ipv6_socket = options.listen_mode != ListenMode::ipv4;
+  auto listen_address = use_ipv6_socket
+                            ? oklib::net::InetAddress::any_ipv6(options.port)
+                            : oklib::net::InetAddress::any(options.port);
+  oklib::net::TcpServer::ListenOptions listen_options;
+  listen_options.ipv6_only = options.listen_mode != ListenMode::dual_stack;
+  oklib::net::TcpServer server(&loop, listen_address, "socks5-proxy",
+                               listen_options);
   server.set_thread_num(options.io_threads);
 #if OKLIB_ENABLE_TLS
   if (options.tls) {
@@ -604,12 +601,14 @@ int main(int argc, char** argv) {
                  << server.listen_address().to_ip_port() << " auth="
                  << auth_mode(options.auth) << " TLS="
                  << (options.tls ? "on" : "off") << " I/O threads="
-                 << options.io_threads;
+                 << options.io_threads << " listen-mode="
+                 << listen_mode_name(options.listen_mode);
   std::cout << "oklib SOCKS5 proxy listening on "
             << server.listen_address().to_ip_port() << " auth="
             << auth_mode(options.auth) << " TLS="
             << (options.tls ? "on" : "off") << " I/O threads="
-            << options.io_threads << '\n';
+            << options.io_threads << " listen-mode="
+            << listen_mode_name(options.listen_mode) << '\n';
   loop.loop();
   return EXIT_SUCCESS;
 }

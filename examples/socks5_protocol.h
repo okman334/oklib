@@ -1,6 +1,7 @@
 #pragma once
 
 #include <algorithm>
+#include <arpa/inet.h>
 #include <cstddef>
 #include <cstdint>
 #include <string>
@@ -194,6 +195,21 @@ inline RequestParseResult parse_connect_request(std::string_view data) {
                               TargetAddress{std::move(host),
                                             read_port(data, 5 + domain_len)},
                               total};
+  }
+  if (address_type == 0x04) {
+    constexpr std::size_t kIpv6RequestSize = 4 + 16 + 2;
+    if (data.size() < kIpv6RequestSize) {
+      return {};
+    }
+    char host[INET6_ADDRSTRLEN]{};
+    if (::inet_ntop(AF_INET6, data.data() + 4, host, sizeof(host)) == nullptr) {
+      return RequestParseResult{ParseStatus::error, ReplyCode::general_failure,
+                                {}, 4};
+    }
+    return RequestParseResult{ParseStatus::complete,
+                              ReplyCode::success,
+                              TargetAddress{host, read_port(data, 20)},
+                              kIpv6RequestSize};
   }
   return RequestParseResult{ParseStatus::error,
                             ReplyCode::addr_type_not_supported, {}, 4};

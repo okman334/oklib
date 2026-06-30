@@ -92,9 +92,15 @@ int main() {
   auto ipv6 = parse_connect_request(
       bytes({0x05, 0x01, 0x00, 0x04, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
              0, 1, 0, 80}));
-  require(ipv6.status == ParseStatus::error, "IPv6 request is rejected");
-  require(ipv6.reply == ReplyCode::addr_type_not_supported,
-          "IPv6 rejection maps to addr type reply");
+  require(ipv6.status == ParseStatus::complete, "IPv6 connect request parses");
+  require(ipv6.target.host == "::1", "IPv6 host is formatted");
+  require(ipv6.target.port == 80, "IPv6 port is parsed");
+  require(ipv6.consumed == 22, "IPv6 request consumes exact request length");
+
+  auto short_ipv6 = parse_connect_request(
+      bytes({0x05, 0x01, 0x00, 0x04, 0, 0, 0, 0, 0, 0}));
+  require(short_ipv6.status == ParseStatus::need_more,
+          "short IPv6 request waits for more bytes");
 
   auto success = build_reply(ReplyCode::success);
   require(success == bytes({0x05, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0, 0}),
