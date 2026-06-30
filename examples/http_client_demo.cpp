@@ -4,6 +4,7 @@
 #include <iostream>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -32,6 +33,17 @@ uint16_t parse_port(const char* value, uint16_t fallback) {
   return static_cast<uint16_t>(parsed);
 }
 
+std::string default_host_header(std::string_view ip, uint16_t port) {
+  std::string host;
+  if (ip.find(':') != std::string_view::npos) {
+    host = "[" + std::string(ip) + "]";
+  } else {
+    host = std::string(ip);
+  }
+  host += ":" + std::to_string(port);
+  return host;
+}
+
 Args parse_args(int argc, char** argv) {
   Args args;
   std::vector<std::string> positionals;
@@ -57,7 +69,7 @@ Args parse_args(int argc, char** argv) {
   if (positionals.size() > 1) {
     args.port = parse_port(positionals[1].c_str(), args.port);
   }
-  args.host = args.ip + ":" + std::to_string(args.port);
+  args.host = default_host_header(args.ip, args.port);
   if (positionals.size() > 2) {
     args.host = positionals[2];
   }

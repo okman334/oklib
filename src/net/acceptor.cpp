@@ -9,12 +9,18 @@
 
 namespace oklib::net {
 
-Acceptor::Acceptor(EventLoop* loop, const InetAddress& listen_address, bool reuse_port)
+Acceptor::Acceptor(EventLoop* loop,
+                   const InetAddress& listen_address,
+                   bool reuse_port,
+                   bool ipv6_only)
     : loop_(loop),
-      accept_socket_(Socket::create_nonblocking()),
+      accept_socket_(Socket::create_nonblocking(listen_address.family())),
       accept_channel_(loop, accept_socket_.fd()) {
   accept_socket_.set_reuse_addr(true);
   accept_socket_.set_reuse_port(reuse_port);
+  if (listen_address.is_ipv6()) {
+    accept_socket_.set_ipv6_only(ipv6_only);
+  }
   accept_socket_.bind(listen_address);
   accept_channel_.set_read_callback([this](oklib::Timestamp time) { handle_read(time); });
 }

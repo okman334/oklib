@@ -51,6 +51,7 @@ add_library(oklib_net STATIC
   src/net/event_loop_thread_pool.cpp
   src/net/inet_address.cpp
   src/net/poller.cpp
+  src/net/resolver.cpp
   src/net/socket.cpp
   src/net/tcp_client.cpp
   src/net/tcp_connection.cpp

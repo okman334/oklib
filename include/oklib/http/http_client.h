@@ -10,6 +10,7 @@
 #include <string>
 #include <string_view>
 #include <utility>
+#include <vector>
 
 #include "oklib/base/noncopyable.h"
 #include "oklib/http/http_headers.h"
@@ -86,6 +87,11 @@ class HttpClient : private oklib::Noncopyable {
 
   HttpClient(oklib::net::EventLoop* loop,
              const oklib::net::InetAddress& server_address,
+             std::string host,
+             std::string name,
+             HttpClientOptions options = {});
+  HttpClient(oklib::net::EventLoop* loop,
+             std::vector<oklib::net::InetAddress> server_addresses,
              std::string host,
              std::string name,
              HttpClientOptions options = {});

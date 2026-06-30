@@ -3,6 +3,7 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <vector>
 
 #include "oklib/base/noncopyable.h"
 #include "oklib/net/callbacks.h"
@@ -17,6 +18,7 @@ class EventLoop;
 class TcpClient : private oklib::Noncopyable {
  public:
   TcpClient(EventLoop* loop, const InetAddress& server_address, std::string name);
+  TcpClient(EventLoop* loop, std::vector<InetAddress> server_addresses, std::string name);
   ~TcpClient();
 
   void connect();

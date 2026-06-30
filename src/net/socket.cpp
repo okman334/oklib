@@ -46,8 +46,8 @@ Socket& Socket::operator=(Socket&& other) noexcept {
   return *this;
 }
 
-Socket Socket::create_nonblocking() {
-  int fd = ::socket(AF_INET, SOCK_STREAM, 0);
+Socket Socket::create_nonblocking(sa_family_t family) {
+  int fd = ::socket(family, SOCK_STREAM, 0);
   if (fd < 0) {
     throw std::system_error(errno, std::generic_category(), "socket");
   }
@@ -74,7 +74,7 @@ void Socket::listen() const {
 }
 
 int Socket::accept(InetAddress* peer_address) const {
-  sockaddr_in addr{};
+  sockaddr_storage addr{};
   socklen_t len = sizeof(addr);
 #if defined(__linux__)
   const int connfd = ::accept4(fd_, reinterpret_cast<sockaddr*>(&addr), &len, SOCK_NONBLOCK | SOCK_CLOEXEC);
@@ -85,7 +85,7 @@ int Socket::accept(InetAddress* peer_address) const {
   }
 #endif
   if (connfd >= 0 && peer_address != nullptr) {
-    *peer_address = InetAddress(addr);
+    *peer_address = InetAddress(reinterpret_cast<const sockaddr*>(&addr), len);
   }
   return connfd;
 }
@@ -108,6 +108,14 @@ void Socket::set_reuse_port(bool on) const {
 #endif
 }
 
+void Socket::set_ipv6_only(bool on) const {
+  int optval = on ? 1 : 0;
+  if (::setsockopt(fd_, IPPROTO_IPV6, IPV6_V6ONLY, &optval,
+                   static_cast<socklen_t>(sizeof(optval))) != 0) {
+    throw std::system_error(errno, std::generic_category(), "setsockopt IPV6_V6ONLY");
+  }
+}
+
 void Socket::set_tcp_no_delay(bool on) const {
   int optval = on ? 1 : 0;
   ::setsockopt(fd_, IPPROTO_TCP, TCP_NODELAY, &optval, static_cast<socklen_t>(sizeof(optval)));
@@ -119,21 +127,21 @@ void Socket::set_keep_alive(bool on) const {
 }
 
 InetAddress Socket::local_address() const {
-  sockaddr_in addr{};
+  sockaddr_storage addr{};
   socklen_t len = sizeof(addr);
   if (::getsockname(fd_, reinterpret_cast<sockaddr*>(&addr), &len) != 0) {
     throw std::system_error(errno, std::generic_category(), "getsockname");
   }
-  return InetAddress(addr);
+  return InetAddress(reinterpret_cast<const sockaddr*>(&addr), len);
 }
 
 InetAddress Socket::peer_address() const {
-  sockaddr_in addr{};
+  sockaddr_storage addr{};
   socklen_t len = sizeof(addr);
   if (::getpeername(fd_, reinterpret_cast<sockaddr*>(&addr), &len) != 0) {
     throw std::system_error(errno, std::generic_category(), "getpeername");
   }
-  return InetAddress(addr);
+  return InetAddress(reinterpret_cast<const sockaddr*>(&addr), len);
 }
 
 }  // namespace oklib::net

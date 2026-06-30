@@ -3,6 +3,7 @@
 #include <chrono>
 #include <optional>
 #include <string>
+#include <vector>
 
 #include "oklib/base/noncopyable.h"
 #include "oklib/http/http_client.h"
@@ -41,7 +42,7 @@ class HttpSyncClient : private oklib::Noncopyable {
 
  private:
   struct Endpoint {
-    oklib::net::InetAddress address;
+    std::vector<oklib::net::InetAddress> addresses;
     std::string host_header;
     std::string host_name;
     std::string target;

@@ -2,6 +2,7 @@
 
 #include <cassert>
 #include <cstdio>
+#include <utility>
 
 #include "oklib/net/acceptor.h"
 #include "oklib/net/event_loop.h"
@@ -11,10 +12,25 @@
 
 namespace oklib::net {
 
-TcpServer::TcpServer(EventLoop* loop, const InetAddress& listen_address, std::string name, Option option)
+TcpServer::TcpServer(EventLoop* loop,
+                     const InetAddress& listen_address,
+                     std::string name,
+                     Option option)
+    : TcpServer(loop,
+                listen_address,
+                std::move(name),
+                ListenOptions{option, true}) {}
+
+TcpServer::TcpServer(EventLoop* loop,
+                     const InetAddress& listen_address,
+                     std::string name,
+                     ListenOptions options)
     : loop_(loop),
       name_(std::move(name)),
-      acceptor_(std::make_unique<Acceptor>(loop, listen_address, option == Option::reuse_port)),
+      acceptor_(std::make_unique<Acceptor>(loop,
+                                           listen_address,
+                                           options.reuse_port == Option::reuse_port,
+                                           options.ipv6_only)),
       thread_pool_(std::make_shared<EventLoopThreadPool>(loop, name_)) {
   acceptor_->set_new_connection_callback(
       [this](int sockfd, const InetAddress& peer_address) { new_connection(sockfd, peer_address); });

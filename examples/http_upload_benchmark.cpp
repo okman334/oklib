@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <exception>
 #include <filesystem>
 #include <iomanip>
 #include <iostream>
@@ -64,13 +65,35 @@ bool parse_url(std::string_view url, Target* target) {
   const auto slash = url.find('/');
   const auto authority = slash == std::string_view::npos ? url : url.substr(0, slash);
   target->path = slash == std::string_view::npos ? "/" : std::string(url.substr(slash));
-  const auto colon = authority.rfind(':');
-  if (colon == std::string_view::npos) {
-    target->host = std::string(authority);
-    target->port = 80;
+  if (authority.empty()) {
+    return false;
+  }
+
+  if (authority.front() == '[') {
+    const auto close = authority.find(']');
+    if (close == std::string_view::npos || close == 1) {
+      return false;
+    }
+    target->host = std::string(authority.substr(1, close - 1));
+    if (close + 1 == authority.size()) {
+      target->port = 80;
+    } else if (authority[close + 1] == ':' && close + 2 < authority.size()) {
+      target->port = parse_port(authority.substr(close + 2), 80);
+    } else {
+      return false;
+    }
   } else {
-    target->host = std::string(authority.substr(0, colon));
-    target->port = parse_port(authority.substr(colon + 1), 80);
+    const auto colon = authority.rfind(':');
+    if (colon == std::string_view::npos) {
+      target->host = std::string(authority);
+      target->port = 80;
+    } else {
+      if (authority.find(':') != colon) {
+        return false;
+      }
+      target->host = std::string(authority.substr(0, colon));
+      target->port = parse_port(authority.substr(colon + 1), 80);
+    }
   }
   return !target->host.empty() && target->port != 0;
 }
@@ -109,23 +132,29 @@ long long percentile(std::vector<long long>& values, double p) {
 }
 
 int connect_target(const Target& target) {
-  int fd = ::socket(AF_INET, SOCK_STREAM, 0);
+  oklib::net::InetAddress address;
+  try {
+    address = oklib::net::InetAddress(target.host, target.port);
+  } catch (const std::exception&) {
+    return -1;
+  }
+  int fd = ::socket(address.family(), SOCK_STREAM, 0);
   if (fd < 0) {
     return -1;
   }
 
-  sockaddr_in address{};
-  address.sin_family = AF_INET;
-  address.sin_port = htons(target.port);
-  if (::inet_pton(AF_INET, target.host.c_str(), &address.sin_addr) != 1) {
-    ::close(fd);
-    return -1;
-  }
-  if (::connect(fd, reinterpret_cast<sockaddr*>(&address), sizeof(address)) != 0) {
+  if (::connect(fd, address.sockaddr_ptr(), address.length()) != 0) {
     ::close(fd);
     return -1;
   }
   return fd;
+}
+
+std::string host_header_value(const Target& target) {
+  if (target.host.find(':') != std::string::npos) {
+    return "[" + target.host + "]:" + std::to_string(target.port);
+  }
+  return target.host + ":" + std::to_string(target.port);
 }
 
 bool write_all_chunked(int fd, std::string_view data, std::size_t chunk_size) {
@@ -189,7 +218,7 @@ bool send_upload_request(const Target& target,
 
   const std::string headers =
       "POST " + path + " HTTP/1.1\r\n"
-      "Host: " + target.host + ":" + std::to_string(target.port) + "\r\n"
+      "Host: " + host_header_value(target) + "\r\n"
       "Content-Type: " + content_type + "\r\n"
       "Content-Length: " + std::to_string(body.size()) + "\r\n"
       "Connection: close\r\n\r\n";

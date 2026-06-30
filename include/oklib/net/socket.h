@@ -13,7 +13,7 @@ class Socket : private oklib::Noncopyable {
   Socket(Socket&& other) noexcept;
   Socket& operator=(Socket&& other) noexcept;
 
-  static Socket create_nonblocking();
+  static Socket create_nonblocking(sa_family_t family = AF_INET);
 
   [[nodiscard]] int fd() const noexcept { return fd_; }
   [[nodiscard]] int release() noexcept;
@@ -25,6 +25,7 @@ class Socket : private oklib::Noncopyable {
 
   void set_reuse_addr(bool on) const;
   void set_reuse_port(bool on) const;
+  void set_ipv6_only(bool on) const;
   void set_tcp_no_delay(bool on) const;
   void set_keep_alive(bool on) const;
 

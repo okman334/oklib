@@ -1,7 +1,9 @@
 #pragma once
 
+#include <cstddef>
 #include <functional>
 #include <memory>
+#include <vector>
 
 #include "oklib/base/noncopyable.h"
 #include "oklib/net/inet_address.h"
@@ -16,6 +18,7 @@ class Connector : private oklib::Noncopyable, public std::enable_shared_from_thi
   using NewConnectionCallback = std::function<void(int sockfd)>;
 
   Connector(EventLoop* loop, InetAddress server_address);
+  Connector(EventLoop* loop, std::vector<InetAddress> server_addresses);
   ~Connector();
 
   void set_new_connection_callback(NewConnectionCallback callback) {
@@ -37,12 +40,14 @@ class Connector : private oklib::Noncopyable, public std::enable_shared_from_thi
   void handle_write();
   void handle_error();
   void retry(int sockfd);
+  [[nodiscard]] const InetAddress& current_address() const;
   int remove_and_reset_channel();
   void reset_channel();
   void set_state(State state) noexcept { state_ = state; }
 
   EventLoop* loop_;
-  InetAddress server_address_;
+  std::vector<InetAddress> server_addresses_;
+  std::size_t next_address_index_{0};
   bool connect_{false};
   bool retry_{false};
   State state_{State::disconnected};

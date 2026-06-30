@@ -29,8 +29,17 @@ class TcpServer : private oklib::Noncopyable {
     reuse_port,
   };
 
+  struct ListenOptions {
+    Option reuse_port{Option::no_reuse_port};
+    bool ipv6_only{true};
+  };
+
   TcpServer(EventLoop* loop, const InetAddress& listen_address, std::string name,
             Option option = Option::no_reuse_port);
+  TcpServer(EventLoop* loop,
+            const InetAddress& listen_address,
+            std::string name,
+            ListenOptions options);
   ~TcpServer();
 
   [[nodiscard]] EventLoop* loop() const noexcept { return loop_; }

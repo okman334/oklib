@@ -4,6 +4,10 @@
 #include <oklib/net/event_loop.h>
 #include <oklib/net/inet_address.h>
 
+#include <netinet/in.h>
+#include <sys/socket.h>
+#include <unistd.h>
+
 #include <atomic>
 #include <chrono>
 #include <cstdlib>
@@ -11,6 +15,7 @@
 #include <iostream>
 #include <string>
 #include <thread>
+#include <utility>
 
 namespace {
 
@@ -21,21 +26,37 @@ void require(bool condition, const char* message) {
   }
 }
 
+bool ipv6_loopback_available() {
+  const int fd = ::socket(AF_INET6, SOCK_STREAM, 0);
+  if (fd < 0) {
+    return false;
+  }
+  sockaddr_in6 address{};
+  address.sin6_family = AF_INET6;
+  address.sin6_addr = in6addr_loopback;
+  address.sin6_port = 0;
+  const bool ok = ::bind(fd, reinterpret_cast<sockaddr*>(&address), sizeof(address)) == 0;
+  ::close(fd);
+  return ok;
+}
+
 class TestHttpServer {
  public:
-  TestHttpServer() {
+  explicit TestHttpServer(oklib::net::InetAddress listen_address =
+                              oklib::net::InetAddress::loopback(0)) {
     std::promise<oklib::net::InetAddress> address_ready;
     std::promise<oklib::net::EventLoop*> loop_ready;
     auto address_future = address_ready.get_future();
     auto loop_future = loop_ready.get_future();
 
     thread_ = std::thread([this,
+                           listen_address = std::move(listen_address),
                            address_ready = std::move(address_ready),
                            loop_ready = std::move(loop_ready)]() mutable {
       oklib::net::EventLoop loop;
       loop_.store(&loop, std::memory_order_release);
       oklib::http::HttpServer server(&loop,
-                                     oklib::net::InetAddress::loopback(0),
+                                     listen_address,
                                      "http-sync-client-test-server");
       server.set_http_callback([this](const oklib::http::HttpRequest& request,
                                       oklib::http::HttpResponse* response) {
@@ -99,6 +120,30 @@ void test_sync_client_posts_url_request() {
   require(server.requests() == 1, "server receives exactly one sync request");
 }
 
+void test_sync_client_gets_ipv6_literal_url() {
+  if (!ipv6_loopback_available()) {
+    std::cout << "skip HTTP sync IPv6 URL test: ::1 unavailable\n";
+    return;
+  }
+
+  TestHttpServer server(oklib::net::InetAddress::loopback_ipv6(0));
+  oklib::http::HttpSyncClient client;
+
+  oklib::http::HttpClientRequest request("GET", "/unused");
+  request.set_url("http://[::1]:" + std::to_string(server.address().port()) +
+                  "/ipv6?name=sync");
+  request.set_timeout(std::chrono::seconds(2));
+
+  oklib::http::HttpResponseMessage response;
+  const int ret = client.send(&request, &response);
+
+  require(ret == static_cast<int>(oklib::http::HttpSyncClientError::ok),
+          "sync client returns ok for IPv6 literal URL");
+  require(response.status_code == 200, "sync client receives IPv6 status");
+  require(response.body == "GET /ipv6?name=sync ", "sync client receives IPv6 body");
+  require(server.requests() == 1, "IPv6 server receives exactly one sync request");
+}
+
 void test_sync_client_rejects_bad_url() {
   oklib::http::HttpSyncClient client;
   oklib::http::HttpClientRequest request("GET", "/");
@@ -138,6 +183,7 @@ void test_sync_client_times_out() {
 
 int main() {
   test_sync_client_posts_url_request();
+  test_sync_client_gets_ipv6_literal_url();
   test_sync_client_rejects_bad_url();
   test_sync_client_rejects_event_loop_thread();
   test_sync_client_times_out();

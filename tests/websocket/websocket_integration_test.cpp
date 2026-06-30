@@ -10,6 +10,7 @@
 #include <oklib/websocket/websocket_server.h>
 
 #include <arpa/inet.h>
+#include <netinet/in.h>
 #include <sys/socket.h>
 #include <unistd.h>
 
@@ -110,6 +111,20 @@ bool read_one_frame(int fd,
       return true;
     }
   }
+}
+
+bool ipv6_loopback_available() {
+  const int fd = ::socket(AF_INET6, SOCK_STREAM, 0);
+  if (fd < 0) {
+    return false;
+  }
+  sockaddr_in6 address{};
+  address.sin6_family = AF_INET6;
+  address.sin6_addr = in6addr_loopback;
+  address.sin6_port = 0;
+  const bool ok = ::bind(fd, reinterpret_cast<sockaddr*>(&address), sizeof(address)) == 0;
+  ::close(fd);
+  return ok;
 }
 
 void test_websocket_client_replies_to_ping() {
@@ -600,6 +615,77 @@ void test_websocket_server_client_echo_and_http() {
   require(closed.load(), "close callback observed");
 }
 
+void test_websocket_client_supports_ipv6_literal_url() {
+  using namespace std::chrono_literals;
+
+  if (!ipv6_loopback_available()) {
+    std::cout << "skip WebSocket IPv6 URL test: ::1 unavailable\n";
+    return;
+  }
+
+  oklib::net::EventLoop loop;
+  oklib::websocket::WebSocketServer server(&loop,
+                                           oklib::net::InetAddress::loopback_ipv6(0),
+                                           "websocket-ipv6-integration-server");
+
+  oklib::websocket::WebSocketService service;
+  service.on_open = [](const oklib::websocket::WebSocketChannelPtr& channel,
+                       const oklib::http::HttpRequest&) {
+    channel->send_text("ipv6-welcome");
+  };
+  service.on_message = [](const oklib::websocket::WebSocketChannelPtr& channel,
+                          std::string_view message,
+                          oklib::websocket::WebSocketOpcode opcode) {
+    if (opcode == oklib::websocket::WebSocketOpcode::text) {
+      channel->send_text("ipv6-echo:" + std::string(message));
+    }
+  };
+  server.register_websocket_service(service);
+  server.start();
+
+  oklib::websocket::WebSocketClient client(&loop, "websocket-ipv6-client");
+  std::vector<std::string> messages;
+  bool opened = false;
+  bool failed = false;
+  client.set_open_callback([&](const oklib::websocket::WebSocketChannelPtr&) {
+    opened = true;
+    client.send_text("oklib");
+  });
+  client.set_message_callback([&](const oklib::websocket::WebSocketChannelPtr&,
+                                  std::string_view message,
+                                  oklib::websocket::WebSocketOpcode opcode) {
+    if (opcode != oklib::websocket::WebSocketOpcode::text) {
+      failed = true;
+      loop.quit();
+      return;
+    }
+    messages.emplace_back(message);
+    if (messages.size() == 2) {
+      client.close();
+      loop.run_after(20ms, [&] { loop.quit(); });
+    }
+  });
+  client.set_error_callback([&](const oklib::websocket::WebSocketChannelPtr&,
+                                oklib::websocket::WebSocketError) {
+    failed = true;
+    loop.quit();
+  });
+
+  const std::string url = "ws://[::1]:" + std::to_string(server.port()) + "/ws";
+  require(client.open(url) == 0, "IPv6 websocket client open starts");
+  loop.run_after(3s, [&] {
+    failed = true;
+    loop.quit();
+  });
+  loop.loop();
+
+  require(!failed, "IPv6 websocket integration did not fail");
+  require(opened, "IPv6 websocket client opened");
+  require(messages.size() == 2, "IPv6 websocket client receives welcome and echo");
+  require(messages[0] == "ipv6-welcome", "IPv6 websocket welcome received");
+  require(messages[1] == "ipv6-echo:oklib", "IPv6 websocket echo received");
+}
+
 #if OKLIB_ENABLE_TLS
 void test_wss_client_server_round_trip() {
   using namespace std::chrono_literals;
@@ -689,6 +775,7 @@ int main() {
   test_websocket_client_replies_to_ping();
   test_websocket_client_reports_protocol_close();
   test_websocket_server_client_echo_and_http();
+  test_websocket_client_supports_ipv6_literal_url();
 #if OKLIB_ENABLE_TLS
   test_wss_client_server_round_trip();
 #endif

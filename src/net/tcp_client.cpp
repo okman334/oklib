@@ -1,6 +1,8 @@
 #include "oklib/net/tcp_client.h"
 
 #include <cstdio>
+#include <stdexcept>
+#include <utility>
 
 #include "oklib/net/event_loop.h"
 #include "oklib/net/socket.h"
@@ -9,9 +11,17 @@
 namespace oklib::net {
 
 TcpClient::TcpClient(EventLoop* loop, const InetAddress& server_address, std::string name)
+    : TcpClient(loop, std::vector<InetAddress>{server_address}, std::move(name)) {}
+
+TcpClient::TcpClient(EventLoop* loop, std::vector<InetAddress> server_addresses, std::string name)
     : loop_(loop),
-      connector_(std::make_shared<Connector>(loop, server_address)),
-      server_address_(server_address),
+      connector_(std::make_shared<Connector>(loop, server_addresses)),
+      server_address_([&server_addresses]() -> InetAddress {
+        if (server_addresses.empty()) {
+          throw std::invalid_argument("TcpClient requires at least one server address");
+        }
+        return server_addresses.front();
+      }()),
       name_(std::move(name)) {
   connector_->set_new_connection_callback([this](int sockfd) { new_connection(sockfd); });
 }
@@ -62,7 +72,7 @@ void TcpClient::new_connection(int sockfd) {
   char buf[64];
   std::snprintf(buf, sizeof(buf), "-%s#%d", peer_address.to_ip_port().c_str(), next_connection_id_++);
   auto conn = std::make_shared<TcpConnection>(loop_, name_ + buf, sockfd, local_address, peer_address);
-  conn->enable_client_tls(tls_options_, server_address_.to_ip());
+  conn->enable_client_tls(tls_options_, peer_address.to_ip());
   conn->set_connection_callback(connection_callback_);
   conn->set_message_callback(message_callback_);
   conn->set_write_complete_callback(write_complete_callback_);

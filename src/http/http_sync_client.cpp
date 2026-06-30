@@ -7,8 +7,10 @@
 #include <string_view>
 #include <system_error>
 #include <utility>
+#include <vector>
 
 #include "oklib/net/event_loop.h"
+#include "oklib/net/resolver.h"
 
 namespace oklib::http {
 namespace {
@@ -46,13 +48,6 @@ std::string strip_fragment(std::string_view target) {
   return std::string(target.empty() ? std::string_view("/") : target);
 }
 
-std::string host_for_connect(std::string_view host) {
-  if (to_lower(host) == "localhost") {
-    return "127.0.0.1";
-  }
-  return std::string(host);
-}
-
 }  // namespace
 
 HttpSyncClient::HttpSyncClient(HttpSyncClientOptions options)
@@ -60,9 +55,13 @@ HttpSyncClient::HttpSyncClient(HttpSyncClientOptions options)
 
 HttpSyncClient::HttpSyncClient(const oklib::net::InetAddress& server_address,
                                std::string host,
-                               HttpSyncClientOptions options)
+    HttpSyncClientOptions options)
     : options_(std::move(options)) {
-  default_endpoint_ = Endpoint{server_address, std::move(host), {}, {}, false};
+  default_endpoint_ = Endpoint{std::vector<oklib::net::InetAddress>{server_address},
+                               std::move(host),
+                               {},
+                               {},
+                               false};
 }
 
 std::optional<HttpSyncClient::Endpoint> HttpSyncClient::parse_url(std::string_view url,
@@ -93,8 +92,7 @@ std::optional<HttpSyncClient::Endpoint> HttpSyncClient::parse_url(std::string_vi
   const auto target_start = remainder.find_first_of("/?#");
   const auto authority =
       target_start == std::string_view::npos ? remainder : remainder.substr(0, target_start);
-  if (authority.empty() || authority.find('@') != std::string_view::npos ||
-      authority.front() == '[') {
+  if (authority.empty() || authority.find('@') != std::string_view::npos) {
     if (error_code != nullptr) {
       *error_code = static_cast<int>(HttpSyncClientError::unsupported_host);
     }
@@ -103,7 +101,28 @@ std::optional<HttpSyncClient::Endpoint> HttpSyncClient::parse_url(std::string_vi
 
   std::string_view host = authority;
   std::uint16_t port = https ? 443 : 80;
-  if (const auto colon = authority.find(':'); colon != std::string_view::npos) {
+  bool bracketed_ipv6 = false;
+  if (authority.front() == '[') {
+    const auto close = authority.find(']');
+    if (close == std::string_view::npos || close == 1) {
+      if (error_code != nullptr) {
+        *error_code = static_cast<int>(HttpSyncClientError::invalid_url);
+      }
+      return std::nullopt;
+    }
+    bracketed_ipv6 = true;
+    host = authority.substr(1, close - 1);
+    if (close + 1 < authority.size()) {
+      if (authority[close + 1] != ':' ||
+          close + 2 == authority.size() ||
+          !parse_port(authority.substr(close + 2), &port)) {
+        if (error_code != nullptr) {
+          *error_code = static_cast<int>(HttpSyncClientError::invalid_url);
+        }
+        return std::nullopt;
+      }
+    }
+  } else if (const auto colon = authority.find(':'); colon != std::string_view::npos) {
     if (authority.find(':', colon + 1) != std::string_view::npos ||
         colon == 0 ||
         colon + 1 == authority.size() ||
@@ -129,23 +148,28 @@ std::optional<HttpSyncClient::Endpoint> HttpSyncClient::parse_url(std::string_vi
   }
 
   const bool default_port = (!https && port == 80) || (https && port == 443);
-  std::string host_header(host);
+  std::string host_header;
+  if (bracketed_ipv6) {
+    host_header = "[" + std::string(host) + "]";
+  } else {
+    host_header = std::string(host);
+  }
   if (!default_port) {
     host_header += ":" + std::to_string(port);
   }
 
-  try {
-    return Endpoint{oklib::net::InetAddress(host_for_connect(host), port),
-                    std::move(host_header),
-                    std::string(host),
-                    std::move(target),
-                    https};
-  } catch (const std::exception&) {
+  auto addresses = oklib::net::resolve_tcp_addresses(host, port);
+  if (addresses.empty()) {
     if (error_code != nullptr) {
       *error_code = static_cast<int>(HttpSyncClientError::unsupported_host);
     }
     return std::nullopt;
   }
+  return Endpoint{std::move(addresses),
+                  std::move(host_header),
+                  std::string(host),
+                  std::move(target),
+                  https};
 }
 
 std::optional<HttpSyncClient::Endpoint> HttpSyncClient::resolve_endpoint(
@@ -209,7 +233,7 @@ int HttpSyncClient::send(HttpClientRequest* request, HttpResponseMessage* respon
 
   oklib::net::EventLoop loop;
   HttpClient client(&loop,
-                    endpoint->address,
+                    endpoint->addresses,
                     endpoint->host_header,
                     "oklib-http-sync-client",
                     std::move(client_options));

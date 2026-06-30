@@ -15,7 +15,10 @@ class Acceptor : private oklib::Noncopyable {
  public:
   using NewConnectionCallback = std::function<void(int sockfd, const InetAddress& peer_address)>;
 
-  Acceptor(EventLoop* loop, const InetAddress& listen_address, bool reuse_port);
+  Acceptor(EventLoop* loop,
+           const InetAddress& listen_address,
+           bool reuse_port,
+           bool ipv6_only = true);
 
   void set_new_connection_callback(NewConnectionCallback callback) {
     new_connection_callback_ = std::move(callback);

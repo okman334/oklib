@@ -207,9 +207,20 @@ HttpClient::HttpClient(oklib::net::EventLoop* loop,
                        std::string host,
                        std::string name,
                        HttpClientOptions options)
+    : HttpClient(loop,
+                 std::vector<oklib::net::InetAddress>{server_address},
+                 std::move(host),
+                 std::move(name),
+                 std::move(options)) {}
+
+HttpClient::HttpClient(oklib::net::EventLoop* loop,
+                       std::vector<oklib::net::InetAddress> server_addresses,
+                       std::string host,
+                       std::string name,
+                       HttpClientOptions options)
     : loop_(loop),
       host_(std::move(host)),
-      client_(loop, server_address, std::move(name)),
+      client_(loop, std::move(server_addresses), std::move(name)),
       cache_(std::move(options.cache)),
       tls_options_(std::move(options.tls)) {
   if (options.retry) {

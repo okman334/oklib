@@ -5,17 +5,17 @@
 #include <charconv>
 #include <cstring>
 #include <memory>
-#include <netdb.h>
 #include <optional>
-#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <utility>
+#include <vector>
 
 #include "oklib/http/http_headers.h"
 #include "oklib/net/buffer.h"
 #include "oklib/net/event_loop.h"
 #include "oklib/net/inet_address.h"
+#include "oklib/net/resolver.h"
 #include "oklib/net/tcp_connection.h"
 #include "oklib/websocket/websocket_handshake.h"
 #include "websocket_compression.h"
@@ -107,35 +107,6 @@ bool is_reserved_request_header(std::string_view field) {
          equals_ignore_case(field, "Sec-WebSocket-Extensions");
 }
 
-std::optional<oklib::net::InetAddress> resolve_ipv4(std::string_view host, std::uint16_t port) {
-  std::string host_string(host);
-  if (lower(host_string) == "localhost") {
-    host_string = "127.0.0.1";
-  }
-
-  try {
-    return oklib::net::InetAddress(host_string, port);
-  } catch (const std::invalid_argument&) {
-  }
-
-  addrinfo hints{};
-  hints.ai_family = AF_INET;
-  hints.ai_socktype = SOCK_STREAM;
-  hints.ai_protocol = IPPROTO_TCP;
-  addrinfo* result = nullptr;
-  const std::string service = std::to_string(port);
-  if (::getaddrinfo(host_string.c_str(), service.c_str(), &hints, &result) != 0) {
-    return std::nullopt;
-  }
-  std::unique_ptr<addrinfo, decltype(&::freeaddrinfo)> guard(result, ::freeaddrinfo);
-  for (addrinfo* ai = result; ai != nullptr; ai = ai->ai_next) {
-    if (ai->ai_family == AF_INET && ai->ai_addrlen >= sizeof(sockaddr_in)) {
-      return oklib::net::InetAddress(*reinterpret_cast<sockaddr_in*>(ai->ai_addr));
-    }
-  }
-  return std::nullopt;
-}
-
 bool response_accepts_permessage_deflate(const oklib::http::HttpResponseMessage& response) {
   for (const auto& value : response.headers.values("Sec-WebSocket-Extensions")) {
     if (lower(value).find("permessage-deflate") != std::string::npos) {
@@ -181,7 +152,7 @@ std::uint16_t close_code_for_error(WebSocketError error) {
 }
 
 struct ParsedEndpoint {
-  oklib::net::InetAddress address;
+  std::vector<oklib::net::InetAddress> addresses;
   std::string host_header;
   std::string host_name;
   std::string target;
@@ -205,21 +176,42 @@ std::optional<ParsedEndpoint> parse_endpoint(std::string_view url, int* error_co
   const auto target_start = remainder.find_first_of("/?#");
   std::string_view authority =
       target_start == std::string_view::npos ? remainder : remainder.substr(0, target_start);
-  if (authority.empty() || authority.front() == '[') {
+  if (authority.empty() || authority.find('@') != std::string_view::npos) {
     *error_code = static_cast<int>(WebSocketClientErrorCode::unsupported_host);
     return std::nullopt;
   }
 
   std::string_view host = authority;
   std::uint16_t port = secure ? 443 : 80;
-  const auto colon = authority.rfind(':');
-  if (colon != std::string_view::npos) {
-    if (colon == 0 || colon + 1 >= authority.size() ||
-        !parse_port(authority.substr(colon + 1), &port)) {
-      *error_code = static_cast<int>(WebSocketClientErrorCode::unsupported_host);
+  bool bracketed_ipv6 = false;
+  if (authority.front() == '[') {
+    const auto close = authority.find(']');
+    if (close == std::string_view::npos || close == 1) {
+      *error_code = static_cast<int>(WebSocketClientErrorCode::invalid_url);
       return std::nullopt;
     }
-    host = authority.substr(0, colon);
+    bracketed_ipv6 = true;
+    host = authority.substr(1, close - 1);
+    if (close + 1 < authority.size()) {
+      if (authority[close + 1] != ':' ||
+          close + 2 == authority.size() ||
+          !parse_port(authority.substr(close + 2), &port)) {
+        *error_code = static_cast<int>(WebSocketClientErrorCode::invalid_url);
+        return std::nullopt;
+      }
+    }
+  } else {
+    const auto colon = authority.rfind(':');
+    if (colon != std::string_view::npos) {
+      if (authority.find(':') != colon ||
+          colon == 0 ||
+          colon + 1 >= authority.size() ||
+          !parse_port(authority.substr(colon + 1), &port)) {
+        *error_code = static_cast<int>(WebSocketClientErrorCode::unsupported_host);
+        return std::nullopt;
+      }
+      host = authority.substr(0, colon);
+    }
   }
   if (host.empty()) {
     *error_code = static_cast<int>(WebSocketClientErrorCode::unsupported_host);
@@ -238,19 +230,24 @@ std::optional<ParsedEndpoint> parse_endpoint(std::string_view url, int* error_co
     }
   }
 
-  auto address = resolve_ipv4(host, port);
-  if (!address) {
+  auto addresses = oklib::net::resolve_tcp_addresses(host, port);
+  if (addresses.empty()) {
     *error_code = static_cast<int>(WebSocketClientErrorCode::unsupported_host);
     return std::nullopt;
   }
 
   const bool default_port = (!secure && port == 80) || (secure && port == 443);
-  std::string host_header(host);
+  std::string host_header;
+  if (bracketed_ipv6) {
+    host_header = "[" + std::string(host) + "]";
+  } else {
+    host_header = std::string(host);
+  }
   if (!default_port) {
     host_header += ":" + std::to_string(port);
   }
 
-  return ParsedEndpoint{*address,
+  return ParsedEndpoint{std::move(addresses),
                         std::move(host_header),
                         std::string(host),
                         std::move(target),
@@ -304,7 +301,7 @@ int WebSocketClient::open(std::string url, oklib::http::HttpHeaders headers) {
   target_ = std::move(endpoint->target);
   websocket_key_ = websocket_generate_key();
 
-  client_ = std::make_unique<oklib::net::TcpClient>(loop_, endpoint->address, name_);
+  client_ = std::make_unique<oklib::net::TcpClient>(loop_, std::move(endpoint->addresses), name_);
   client_->set_tls_options(tls_options_);
   client_->set_connection_callback([this](const oklib::net::TcpConnectionPtr& connection) {
     on_connection(connection);
