@@ -26,7 +26,7 @@
  *
  * Test with curl:
  *   curl -v --proxy socks5h://127.0.0.1:1080 http://example.com/
- *   curl -v --proxy socks5h://[::1]:1080 http://example.com/
+ *   curl -v --proxy 'socks5h://[::1]:1080' http://example.com/
  *   curl -v --proxy socks5h://alice:secret@127.0.0.1:1080 http://example.com/
  *
  * Note: --tls wraps the proxy listener itself in TLS. A regular
