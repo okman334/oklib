@@ -59,6 +59,8 @@ int main() {
   auto ipv4 = parse_connect_request(
       bytes({0x05, 0x01, 0x00, 0x01, 127, 0, 0, 1, 0x1F, 0x90}));
   require(ipv4.status == ParseStatus::complete, "IPv4 connect request parses");
+  require(ipv4.target.type == AddressType::ipv4,
+          "IPv4 request records address type");
   require(ipv4.target.host == "127.0.0.1", "IPv4 host is formatted");
   require(ipv4.target.port == 8080, "IPv4 port is parsed");
   require(ipv4.consumed == 10, "IPv4 request consumes exact request length");
@@ -75,6 +77,8 @@ int main() {
              '.', 'c', 'o', 'm', 0x00, 0x50}));
   require(domain.status == ParseStatus::complete,
           "domain connect request parses");
+  require(domain.target.type == AddressType::domain,
+          "domain request records address type");
   require(domain.target.host == "example.com", "domain host is parsed");
   require(domain.target.port == 80, "domain port is parsed");
   require(domain.consumed == 18,
@@ -93,6 +97,8 @@ int main() {
       bytes({0x05, 0x01, 0x00, 0x04, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
              0, 1, 0, 80}));
   require(ipv6.status == ParseStatus::complete, "IPv6 connect request parses");
+  require(ipv6.target.type == AddressType::ipv6,
+          "IPv6 request records address type");
   require(ipv6.target.host == "::1", "IPv6 host is formatted");
   require(ipv6.target.port == 80, "IPv6 port is parsed");
   require(ipv6.consumed == 22, "IPv6 request consumes exact request length");

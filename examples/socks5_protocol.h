@@ -33,6 +33,12 @@ enum class ParseStatus {
   error,
 };
 
+enum class AddressType : std::uint8_t {
+  ipv4 = 0x01,
+  domain = 0x03,
+  ipv6 = 0x04,
+};
+
 struct AuthConfig {
   std::string username;
   std::string password;
@@ -49,6 +55,7 @@ struct AuthParseResult {
 };
 
 struct TargetAddress {
+  AddressType type{AddressType::ipv4};
   std::string host;
   std::uint16_t port{0};
 };
@@ -159,7 +166,7 @@ inline RequestParseResult parse_connect_request(std::string_view data) {
     return RequestParseResult{ParseStatus::error, ReplyCode::general_failure,
                               {}, 3};
   }
-  if (address_type == 0x01) {
+  if (address_type == static_cast<std::uint8_t>(AddressType::ipv4)) {
     if (data.size() < 10) {
       return {};
     }
@@ -172,11 +179,12 @@ inline RequestParseResult parse_connect_request(std::string_view data) {
                        std::to_string(static_cast<std::uint8_t>(data[7]));
     return RequestParseResult{ParseStatus::complete,
                               ReplyCode::success,
-                              TargetAddress{std::move(host),
+                              TargetAddress{AddressType::ipv4,
+                                            std::move(host),
                                             read_port(data, 8)},
                               10};
   }
-  if (address_type == 0x03) {
+  if (address_type == static_cast<std::uint8_t>(AddressType::domain)) {
     if (data.size() < 5) {
       return {};
     }
@@ -192,11 +200,12 @@ inline RequestParseResult parse_connect_request(std::string_view data) {
     std::string host(data.data() + 5, domain_len);
     return RequestParseResult{ParseStatus::complete,
                               ReplyCode::success,
-                              TargetAddress{std::move(host),
+                              TargetAddress{AddressType::domain,
+                                            std::move(host),
                                             read_port(data, 5 + domain_len)},
                               total};
   }
-  if (address_type == 0x04) {
+  if (address_type == static_cast<std::uint8_t>(AddressType::ipv6)) {
     constexpr std::size_t kIpv6RequestSize = 4 + 16 + 2;
     if (data.size() < kIpv6RequestSize) {
       return {};
@@ -208,7 +217,9 @@ inline RequestParseResult parse_connect_request(std::string_view data) {
     }
     return RequestParseResult{ParseStatus::complete,
                               ReplyCode::success,
-                              TargetAddress{host, read_port(data, 20)},
+                              TargetAddress{AddressType::ipv6,
+                                            host,
+                                            read_port(data, 20)},
                               kIpv6RequestSize};
   }
   return RequestParseResult{ParseStatus::error,

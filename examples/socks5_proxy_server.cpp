@@ -65,6 +65,7 @@ namespace {
 
 using SocksAuthConfig = oklib::examples::socks5::AuthConfig;
 using SocksAuthMethod = oklib::examples::socks5::AuthMethod;
+using SocksAddressType = oklib::examples::socks5::AddressType;
 using SocksParseStatus = oklib::examples::socks5::ParseStatus;
 using SocksReplyCode = oklib::examples::socks5::ReplyCode;
 
@@ -187,6 +188,8 @@ std::optional<Options> parse_options(int argc, char** argv) {
 std::string bytes_to_string(const std::vector<std::uint8_t>& bytes) {
   return std::string(reinterpret_cast<const char*>(bytes.data()), bytes.size());
 }
+
+const char* address_type_name(SocksAddressType type);
 
 class Socks5ProxySession
     : public std::enable_shared_from_this<Socks5ProxySession> {
@@ -330,10 +333,14 @@ class Socks5ProxySession
     preserved_downstream_ = buffer->retrieve_all_as_string();
     downstream_->pause_reading();
     phase_ = Phase::connecting;
-    connect_upstream(std::move(targets), result.target.host, result.target.port);
+    connect_upstream(std::move(targets),
+                     result.target.type,
+                     result.target.host,
+                     result.target.port);
   }
 
   void connect_upstream(std::vector<oklib::net::InetAddress> targets,
+                        SocksAddressType target_type,
                         std::string_view host,
                         std::uint16_t port) {
     auto weak = weak_from_this();
@@ -363,7 +370,9 @@ class Socks5ProxySession
 
     OKLIB_LOG_INFO << "SOCKS5 connecting "
                    << downstream_->peer_address().to_ip_port() << " to "
-                   << host << ':' << port << " via " << first_target;
+                   << host << ':' << port
+                   << " target-type=" << address_type_name(target_type)
+                   << " via " << first_target;
     client_->connect();
   }
 
@@ -511,6 +520,18 @@ std::shared_ptr<Socks5ProxySession>* session_from(
 
 const char* auth_mode(const SocksAuthConfig& auth) {
   return auth.enabled() ? "username/password" : "none";
+}
+
+const char* address_type_name(SocksAddressType type) {
+  switch (type) {
+    case SocksAddressType::ipv4:
+      return "ipv4";
+    case SocksAddressType::domain:
+      return "domain";
+    case SocksAddressType::ipv6:
+      return "ipv6";
+  }
+  return "unknown";
 }
 
 const char* listen_mode_name(ListenMode mode) {
