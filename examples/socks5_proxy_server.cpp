@@ -69,7 +69,9 @@ using SocksAddressType = oklib::examples::socks5::AddressType;
 using SocksParseStatus = oklib::examples::socks5::ParseStatus;
 using SocksReplyCode = oklib::examples::socks5::ReplyCode;
 
-constexpr auto kConnectTimeout = std::chrono::seconds(2);
+constexpr auto kDefaultConnectTimeout = std::chrono::seconds(10);
+constexpr auto kDefaultHandshakeTimeout = std::chrono::seconds(15);
+constexpr auto kDefaultIdleTimeout = std::chrono::milliseconds(0);
 
 enum class ListenMode {
   ipv4,
@@ -82,6 +84,9 @@ struct Options {
   int io_threads{0};
   ListenMode listen_mode{ListenMode::ipv4};
   SocksAuthConfig auth;
+  std::chrono::milliseconds connect_timeout{kDefaultConnectTimeout};
+  std::chrono::milliseconds handshake_timeout{kDefaultHandshakeTimeout};
+  std::chrono::milliseconds idle_timeout{kDefaultIdleTimeout};
   bool tls{false};
   std::string cert_file;
   std::string key_file;
@@ -123,10 +128,34 @@ bool parse_threads(std::string_view value, int* threads) {
   return true;
 }
 
+bool parse_milliseconds(std::string_view value,
+                        bool allow_zero,
+                        std::chrono::milliseconds* timeout) {
+  if (value.empty()) {
+    return false;
+  }
+  unsigned long long parsed = 0;
+  const auto* begin = value.data();
+  const auto* end = value.data() + value.size();
+  const auto result = std::from_chars(begin, end, parsed);
+  if (result.ec != std::errc{} || result.ptr != end ||
+      (!allow_zero && parsed == 0) ||
+      parsed > static_cast<unsigned long long>(
+                   std::chrono::milliseconds::max().count())) {
+    return false;
+  }
+  *timeout = std::chrono::milliseconds(parsed);
+  return true;
+}
+
 void print_usage(const char* program) {
   std::cerr << "usage: " << program
             << " <port=1080> [username password] [--threads N]"
-               " [--ipv6|--dual-stack] [--tls cert.pem key.pem]\n";
+               " [--ipv6|--dual-stack]"
+               " [--connect-timeout-ms N]"
+               " [--handshake-timeout-ms N]"
+               " [--idle-timeout-ms N]"
+               " [--tls cert.pem key.pem]\n";
 }
 
 std::optional<Options> parse_options(int argc, char** argv) {
@@ -149,6 +178,21 @@ std::optional<Options> parse_options(int argc, char** argv) {
         return std::nullopt;
       }
       options.listen_mode = ListenMode::dual_stack;
+    } else if (arg == "--connect-timeout-ms") {
+      if (i + 1 >= argc ||
+          !parse_milliseconds(argv[++i], false, &options.connect_timeout)) {
+        return std::nullopt;
+      }
+    } else if (arg == "--handshake-timeout-ms") {
+      if (i + 1 >= argc ||
+          !parse_milliseconds(argv[++i], false, &options.handshake_timeout)) {
+        return std::nullopt;
+      }
+    } else if (arg == "--idle-timeout-ms") {
+      if (i + 1 >= argc ||
+          !parse_milliseconds(argv[++i], true, &options.idle_timeout)) {
+        return std::nullopt;
+      }
     } else if (arg == "--tls") {
       if (i + 2 >= argc || starts_with(argv[i + 1], "--") ||
           starts_with(argv[i + 2], "--")) {
@@ -195,8 +239,27 @@ class Socks5ProxySession
     : public std::enable_shared_from_this<Socks5ProxySession> {
  public:
   Socks5ProxySession(oklib::net::TcpConnectionPtr downstream,
-                     SocksAuthConfig auth)
-      : downstream_(std::move(downstream)), auth_(std::move(auth)) {}
+                     SocksAuthConfig auth,
+                     std::chrono::milliseconds connect_timeout,
+                     std::chrono::milliseconds handshake_timeout,
+                     std::chrono::milliseconds idle_timeout)
+      : downstream_(std::move(downstream)),
+        auth_(std::move(auth)),
+        connect_timeout_(connect_timeout),
+        handshake_timeout_(handshake_timeout),
+        idle_timeout_(idle_timeout) {}
+
+  void start() {
+    if (handshake_timeout_.count() <= 0) {
+      return;
+    }
+    auto weak = weak_from_this();
+    handshake_timer_ = downstream_->loop()->run_after(handshake_timeout_, [weak] {
+      if (auto session = weak.lock()) {
+        session->on_handshake_timeout();
+      }
+    });
+  }
 
   void on_downstream_message(oklib::net::Buffer* buffer) {
     if (phase_ == Phase::closed) {
@@ -231,7 +294,7 @@ class Socks5ProxySession
       return;
     }
     phase_ = Phase::closed;
-    cancel_connect_timer();
+    cancel_timers();
     if (upstream_) {
       if (upstream_->connected()) {
         upstream_->force_close();
@@ -362,7 +425,13 @@ class Socks5ProxySession
           }
         });
 
-    connect_timer_ = downstream_->loop()->run_after(kConnectTimeout, [weak] {
+    client_->set_connect_failed_callback([weak] {
+      if (auto session = weak.lock()) {
+        session->on_upstream_connect_failed();
+      }
+    });
+
+    connect_timer_ = downstream_->loop()->run_after(connect_timeout_, [weak] {
       if (auto session = weak.lock()) {
         session->on_connect_timeout();
       }
@@ -392,6 +461,7 @@ class Socks5ProxySession
         return;
       }
       cancel_connect_timer();
+      cancel_handshake_timer();
       upstream_ = connection;
       phase_ = Phase::relay;
       send_bytes(oklib::examples::socks5::build_reply(SocksReplyCode::success));
@@ -400,6 +470,7 @@ class Socks5ProxySession
         preserved_downstream_.clear();
       }
       downstream_->resume_reading();
+      reset_idle_timer();
       OKLIB_LOG_INFO << "SOCKS5 relay established for "
                      << downstream_->peer_address().to_ip_port();
       return;
@@ -423,6 +494,32 @@ class Socks5ProxySession
       return;
     }
     downstream_->send(buffer->retrieve_all_as_string());
+    reset_idle_timer();
+  }
+
+  void on_handshake_timeout() {
+    if (phase_ == Phase::relay || phase_ == Phase::closed) {
+      return;
+    }
+    OKLIB_LOG_WARN << "SOCKS5 handshake timeout for "
+                   << downstream_->peer_address().to_ip_port();
+    if (phase_ == Phase::greeting || phase_ == Phase::user_password) {
+      close_downstream_now();
+      phase_ = Phase::closed;
+    } else {
+      send_reply_and_shutdown(SocksReplyCode::general_failure);
+    }
+    self_hold_.reset();
+  }
+
+  void on_upstream_connect_failed() {
+    if (phase_ != Phase::connecting) {
+      return;
+    }
+    OKLIB_LOG_WARN << "SOCKS5 upstream connect failed for "
+                   << downstream_->peer_address().to_ip_port();
+    send_reply_and_shutdown(SocksReplyCode::general_failure);
+    schedule_upstream_cleanup();
   }
 
   void on_connect_timeout() {
@@ -447,6 +544,7 @@ class Socks5ProxySession
       return;
     }
     upstream_->send(buffer->retrieve_all_as_string());
+    reset_idle_timer();
   }
 
   void send_method_and_shutdown(SocksAuthMethod method) {
@@ -468,17 +566,23 @@ class Socks5ProxySession
   }
 
   void shutdown_downstream() {
-    cancel_connect_timer();
+    cancel_timers();
     if (downstream_ && downstream_->connected()) {
       downstream_->shutdown();
     }
   }
 
   void close_downstream_now() {
-    cancel_connect_timer();
+    cancel_timers();
     if (downstream_ && downstream_->connected()) {
       downstream_->force_close();
     }
+  }
+
+  void cancel_timers() {
+    cancel_connect_timer();
+    cancel_handshake_timer();
+    cancel_idle_timer();
   }
 
   void cancel_connect_timer() {
@@ -486,6 +590,50 @@ class Socks5ProxySession
       downstream_->loop()->cancel(connect_timer_);
       connect_timer_ = oklib::net::TimerId();
     }
+  }
+
+  void cancel_handshake_timer() {
+    if (handshake_timer_.valid()) {
+      downstream_->loop()->cancel(handshake_timer_);
+      handshake_timer_ = oklib::net::TimerId();
+    }
+  }
+
+  void cancel_idle_timer() {
+    if (idle_timer_.valid()) {
+      downstream_->loop()->cancel(idle_timer_);
+      idle_timer_ = oklib::net::TimerId();
+    }
+  }
+
+  void reset_idle_timer() {
+    if (idle_timeout_.count() <= 0 || phase_ != Phase::relay) {
+      return;
+    }
+    cancel_idle_timer();
+    auto weak = weak_from_this();
+    idle_timer_ = downstream_->loop()->run_after(idle_timeout_, [weak] {
+      if (auto session = weak.lock()) {
+        session->on_idle_timeout();
+      }
+    });
+  }
+
+  void on_idle_timeout() {
+    if (phase_ != Phase::relay) {
+      return;
+    }
+    OKLIB_LOG_INFO << "SOCKS5 relay idle timeout for "
+                   << downstream_->peer_address().to_ip_port();
+    phase_ = Phase::closed;
+    cancel_timers();
+    if (downstream_ && downstream_->connected()) {
+      downstream_->force_close();
+    }
+    if (upstream_ && upstream_->connected()) {
+      upstream_->force_close();
+    }
+    schedule_upstream_cleanup();
   }
 
   void schedule_upstream_cleanup() {
@@ -506,9 +654,14 @@ class Socks5ProxySession
   std::unique_ptr<oklib::net::TcpClient> client_;
   std::shared_ptr<Socks5ProxySession> self_hold_;
   SocksAuthConfig auth_;
+  std::chrono::milliseconds connect_timeout_;
+  std::chrono::milliseconds handshake_timeout_;
+  std::chrono::milliseconds idle_timeout_;
   Phase phase_{Phase::greeting};
   std::string preserved_downstream_;
   oklib::net::TimerId connect_timer_;
+  oklib::net::TimerId handshake_timer_;
+  oklib::net::TimerId idle_timer_;
   bool upstream_cleanup_scheduled_{false};
 };
 
@@ -586,11 +739,16 @@ int main(int argc, char** argv) {
 #endif
 
   server.set_connection_callback(
-      [auth = options.auth](const oklib::net::TcpConnectionPtr& connection) {
+      [options](const oklib::net::TcpConnectionPtr& connection) {
         if (connection->connected()) {
-          auto session =
-              std::make_shared<Socks5ProxySession>(connection, auth);
-          connection->set_context(std::move(session));
+          auto session = std::make_shared<Socks5ProxySession>(
+              connection,
+              options.auth,
+              options.connect_timeout,
+              options.handshake_timeout,
+              options.idle_timeout);
+          session->start();
+          connection->set_context(session);
           OKLIB_LOG_INFO << "SOCKS5 downstream connected "
                          << connection->peer_address().to_ip_port();
           return;
@@ -623,13 +781,21 @@ int main(int argc, char** argv) {
                  << auth_mode(options.auth) << " TLS="
                  << (options.tls ? "on" : "off") << " I/O threads="
                  << options.io_threads << " listen-mode="
-                 << listen_mode_name(options.listen_mode);
+                 << listen_mode_name(options.listen_mode)
+                 << " connect-timeout-ms="
+                 << options.connect_timeout.count()
+                 << " handshake-timeout-ms="
+                 << options.handshake_timeout.count()
+                 << " idle-timeout-ms=" << options.idle_timeout.count();
   std::cout << "oklib SOCKS5 proxy listening on "
             << server.listen_address().to_ip_port() << " auth="
             << auth_mode(options.auth) << " TLS="
             << (options.tls ? "on" : "off") << " I/O threads="
             << options.io_threads << " listen-mode="
-            << listen_mode_name(options.listen_mode) << '\n';
+            << listen_mode_name(options.listen_mode)
+            << " connect-timeout-ms=" << options.connect_timeout.count()
+            << " handshake-timeout-ms=" << options.handshake_timeout.count()
+            << " idle-timeout-ms=" << options.idle_timeout.count() << '\n';
   loop.loop();
   return EXIT_SUCCESS;
 }

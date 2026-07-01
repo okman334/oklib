@@ -59,6 +59,23 @@ bool ipv6_dual_stack_available() {
   return bind_ok;
 }
 
+std::uint16_t unused_ipv4_port() {
+  const int fd = ::socket(AF_INET, SOCK_STREAM, 0);
+  require(fd >= 0, "create temporary IPv4 socket");
+  sockaddr_in address{};
+  address.sin_family = AF_INET;
+  address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+  address.sin_port = 0;
+  require(::bind(fd, reinterpret_cast<sockaddr*>(&address), sizeof(address)) == 0,
+          "bind temporary IPv4 socket");
+  socklen_t length = sizeof(address);
+  require(::getsockname(fd, reinterpret_cast<sockaddr*>(&address), &length) == 0,
+          "read temporary IPv4 socket port");
+  const auto port = ntohs(address.sin_port);
+  ::close(fd);
+  return port;
+}
+
 }  // namespace
 
 int main() {
@@ -239,6 +256,24 @@ int main() {
     loop.run_after(3s, [&] { loop.quit(); });
     loop.loop();
     require(received.load(), "TcpClient tries next address candidate after connection failure");
+  }
+
+  {
+    oklib::net::EventLoop loop;
+    std::vector<oklib::net::InetAddress> candidates;
+    candidates.push_back(oklib::net::InetAddress::loopback(unused_ipv4_port()));
+    candidates.push_back(oklib::net::InetAddress::loopback(unused_ipv4_port()));
+    oklib::net::TcpClient client(&loop, std::move(candidates), "failed-client");
+
+    std::atomic<bool> failed{false};
+    client.set_connect_failed_callback([&] {
+      failed = true;
+      loop.quit();
+    });
+    client.connect();
+    loop.run_after(2s, [&] { loop.quit(); });
+    loop.loop();
+    require(failed.load(), "TcpClient reports all address candidates failed");
   }
 
   return 0;

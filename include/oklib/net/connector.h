@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "oklib/base/noncopyable.h"
+#include "oklib/net/callbacks.h"
 #include "oklib/net/inet_address.h"
 
 namespace oklib::net {
@@ -23,6 +24,9 @@ class Connector : private oklib::Noncopyable, public std::enable_shared_from_thi
 
   void set_new_connection_callback(NewConnectionCallback callback) {
     new_connection_callback_ = std::move(callback);
+  }
+  void set_connect_failed_callback(ConnectFailedCallback callback) {
+    connect_failed_callback_ = std::move(callback);
   }
 
   void start();
@@ -53,6 +57,7 @@ class Connector : private oklib::Noncopyable, public std::enable_shared_from_thi
   State state_{State::disconnected};
   std::unique_ptr<Channel> channel_;
   NewConnectionCallback new_connection_callback_;
+  ConnectFailedCallback connect_failed_callback_;
   int retry_delay_ms_{500};
 };
 

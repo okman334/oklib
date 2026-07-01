@@ -162,6 +162,10 @@ void Connector::retry(int sockfd) {
     const auto delay = std::chrono::milliseconds(retry_delay_ms_);
     retry_delay_ms_ = std::min(retry_delay_ms_ * 2, 30000);
     loop_->run_after(delay, [self = shared_from_this()] { self->start_in_loop(); });
+    return;
+  }
+  if (connect_failed_callback_) {
+    connect_failed_callback_();
   }
 }
 

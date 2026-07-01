@@ -8,6 +8,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstdlib>
+#include <functional>
 #include <iostream>
 #include <memory>
 #include <string>
@@ -76,7 +77,9 @@ void test_pause_and_resume_from_another_thread() {
 
   oklib::net::EventLoop loop;
   oklib::net::TcpConnectionPtr server_connection;
+  oklib::net::TcpConnectionPtr client_connection;
   std::atomic<int> messages{0};
+  std::atomic<bool> sent_after_pause{false};
 
   oklib::net::TcpServer server(&loop,
                                oklib::net::InetAddress::loopback(0),
@@ -98,9 +101,15 @@ void test_pause_and_resume_from_another_thread() {
   oklib::net::TcpClient client(&loop,
                                server.listen_address(),
                                "tcp-read-control-thread-client");
-  client.set_connection_callback([&](const oklib::net::TcpConnectionPtr& conn) {
-    if (conn->connected()) {
-      conn->send("threaded-pause");
+  auto send_when_paused = std::make_shared<std::function<void()>>();
+  *send_when_paused = [&] {
+    if (sent_after_pause.load()) {
+      return;
+    }
+    if (server_connection && client_connection &&
+        server_connection->reading_paused()) {
+      sent_after_pause = true;
+      client_connection->send("threaded-pause");
       loop.run_after(80ms, [&] {
         require(messages.load() == 0, "cross-thread pause suppresses reads");
         require(server_connection != nullptr, "server connection exists");
@@ -111,11 +120,20 @@ void test_pause_and_resume_from_another_thread() {
         client.disconnect();
         loop.quit();
       });
+      return;
+    }
+    loop.run_after(10ms, *send_when_paused);
+  };
+  client.set_connection_callback([&](const oklib::net::TcpConnectionPtr& conn) {
+    if (conn->connected()) {
+      client_connection = conn;
+      loop.run_after(10ms, *send_when_paused);
     }
   });
   client.connect();
   loop.run_after(2s, [&] { loop.quit(); });
   loop.loop();
+  require(sent_after_pause.load(), "cross-thread pause completed before send");
 }
 
 }  // namespace
