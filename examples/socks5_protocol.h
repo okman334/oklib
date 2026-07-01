@@ -2,12 +2,16 @@
 
 #include <algorithm>
 #include <arpa/inet.h>
+#include <array>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <string>
 #include <string_view>
 #include <utility>
 #include <vector>
+
+#include "oklib/net/inet_address.h"
 
 namespace oklib::examples::socks5 {
 
@@ -100,9 +104,47 @@ inline std::vector<std::uint8_t> build_auth_status(bool ok) {
   return {kAuthVersion, static_cast<std::uint8_t>(ok ? 0x00 : 0x01)};
 }
 
+inline void append_port(std::vector<std::uint8_t>* output,
+                        std::uint16_t port) {
+  output->push_back(static_cast<std::uint8_t>((port >> 8) & 0xff));
+  output->push_back(static_cast<std::uint8_t>(port & 0xff));
+}
+
+inline std::vector<std::uint8_t> build_ipv4_reply(
+    ReplyCode reply, std::array<std::uint8_t, 4> address, std::uint16_t port) {
+  std::vector<std::uint8_t> output{
+      kVersion, static_cast<std::uint8_t>(reply), 0x00,
+      static_cast<std::uint8_t>(AddressType::ipv4)};
+  output.insert(output.end(), address.begin(), address.end());
+  append_port(&output, port);
+  return output;
+}
+
+inline std::vector<std::uint8_t> build_ipv6_reply(
+    ReplyCode reply, std::array<std::uint8_t, 16> address, std::uint16_t port) {
+  std::vector<std::uint8_t> output{
+      kVersion, static_cast<std::uint8_t>(reply), 0x00,
+      static_cast<std::uint8_t>(AddressType::ipv6)};
+  output.insert(output.end(), address.begin(), address.end());
+  append_port(&output, port);
+  return output;
+}
+
 inline std::vector<std::uint8_t> build_reply(ReplyCode reply) {
-  return {kVersion, static_cast<std::uint8_t>(reply), 0x00, 0x01, 0,
-          0,        0,                                0,    0,    0};
+  return build_ipv4_reply(reply, {0, 0, 0, 0}, 0);
+}
+
+inline std::vector<std::uint8_t> build_bound_reply(
+    ReplyCode reply, const oklib::net::InetAddress& address) {
+  if (address.is_ipv6()) {
+    std::array<std::uint8_t, 16> bytes{};
+    std::memcpy(bytes.data(), &address.raw6().sin6_addr, bytes.size());
+    return build_ipv6_reply(reply, bytes, address.port());
+  }
+
+  std::array<std::uint8_t, 4> bytes{};
+  std::memcpy(bytes.data(), &address.raw().sin_addr, bytes.size());
+  return build_ipv4_reply(reply, bytes, address.port());
 }
 
 inline AuthParseResult parse_user_password_auth(std::string_view data,

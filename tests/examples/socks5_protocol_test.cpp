@@ -1,5 +1,8 @@
 #include "socks5_protocol.h"
 
+#include <oklib/net/inet_address.h>
+
+#include <array>
 #include <cstdint>
 #include <cstdlib>
 #include <initializer_list>
@@ -111,6 +114,39 @@ int main() {
   auto success = build_reply(ReplyCode::success);
   require(success == bytes({0x05, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0, 0}),
           "success reply uses IPv4 wildcard bind address");
+
+  auto bound_ipv4 =
+      build_ipv4_reply(ReplyCode::success,
+                       std::array<std::uint8_t, 4>{127, 0, 0, 1},
+                       8080);
+  require(bound_ipv4 ==
+              bytes({0x05, 0x00, 0x00, 0x01, 127, 0, 0, 1, 0x1F, 0x90}),
+          "success reply can include IPv4 bind address and port");
+
+  auto bound_ipv6 =
+      build_ipv6_reply(ReplyCode::success,
+                       std::array<std::uint8_t, 16>{0, 0, 0, 0, 0, 0, 0, 0,
+                                                    0, 0, 0, 0, 0, 0, 0, 1},
+                       443);
+  require(bound_ipv6 ==
+              bytes({0x05, 0x00, 0x00, 0x04, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                     0, 0, 0, 0, 0, 1, 0x01, 0xBB}),
+          "success reply can include IPv6 bind address and port");
+
+  auto inet_bound_ipv4 =
+      build_bound_reply(ReplyCode::success,
+                        oklib::net::InetAddress("127.0.0.1", 8080));
+  require(inet_bound_ipv4 ==
+              bytes({0x05, 0x00, 0x00, 0x01, 127, 0, 0, 1, 0x1F, 0x90}),
+          "success reply can be built from IPv4 InetAddress");
+
+  auto inet_bound_ipv6 =
+      build_bound_reply(ReplyCode::success,
+                        oklib::net::InetAddress("::1", 443));
+  require(inet_bound_ipv6 ==
+              bytes({0x05, 0x00, 0x00, 0x04, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                     0, 0, 0, 0, 0, 1, 0x01, 0xBB}),
+          "success reply can be built from IPv6 InetAddress");
 
   return EXIT_SUCCESS;
 }

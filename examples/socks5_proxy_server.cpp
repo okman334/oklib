@@ -396,6 +396,7 @@ class Socks5ProxySession
     preserved_downstream_ = buffer->retrieve_all_as_string();
     downstream_->pause_reading();
     phase_ = Phase::connecting;
+    cancel_handshake_timer();
     connect_upstream(std::move(targets),
                      result.target.type,
                      result.target.host,
@@ -464,7 +465,8 @@ class Socks5ProxySession
       cancel_handshake_timer();
       upstream_ = connection;
       phase_ = Phase::relay;
-      send_bytes(oklib::examples::socks5::build_reply(SocksReplyCode::success));
+      send_bytes(oklib::examples::socks5::build_bound_reply(
+          SocksReplyCode::success, connection->local_address()));
       if (!preserved_downstream_.empty()) {
         upstream_->send(std::move(preserved_downstream_));
         preserved_downstream_.clear();
@@ -498,7 +500,8 @@ class Socks5ProxySession
   }
 
   void on_handshake_timeout() {
-    if (phase_ == Phase::relay || phase_ == Phase::closed) {
+    if (phase_ == Phase::connecting || phase_ == Phase::relay ||
+        phase_ == Phase::closed) {
       return;
     }
     OKLIB_LOG_WARN << "SOCKS5 handshake timeout for "
